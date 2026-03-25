@@ -82,6 +82,12 @@ export function resolveVaultProject(projectPath: string): string | null {
   }
 
   const repoId = path.basename(path.resolve(resolved));
+  // Guard: old Python-era format stored the full project path as vaultRoot
+  // (e.g. ~/.vaultops/vault/myproject instead of ~/.vaultops/vault).
+  // Detect by checking if vaultRoot already ends with repoId — if so, don't append again.
+  if (path.basename(vaultRoot) === repoId) {
+    return vaultRoot;
+  }
   return path.join(vaultRoot, repoId);
 }
 

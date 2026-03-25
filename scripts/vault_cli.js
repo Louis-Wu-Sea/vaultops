@@ -1013,6 +1013,48 @@ function cmdUpdate(_opts) {
   }
   if (mcpPatched > 0) ok(`Migrated ${mcpPatched} project(s): .mcp.json Python → Node.js`);
 
+  // Step 6: Normalize vaultRoot (old format stored full project path) + collapse double vault dirs
+  let vaultRootFixed = 0;
+  const freshRegistry = loadProjects();
+  for (const entry of freshRegistry.projects || []) {
+    const repoId = entry.repoId;
+    if (!repoId || !entry.vaultRoot) continue;
+
+    // 6a. Fix registry + config.env if vaultRoot still has old format (includes repoId)
+    let currentVaultRoot = entry.vaultRoot;
+    if (path.basename(currentVaultRoot) === repoId) {
+      const corrected = path.dirname(currentVaultRoot);
+      upsertProject({ ...entry, vaultRoot: corrected });
+      const configEnvPath = path.join(entry.path, '.vaultops', 'config.env');
+      if (fs.existsSync(configEnvPath)) {
+        writeEnvFile(configEnvPath, { VAULTOPS_PROJECT_VAULT_ROOT: corrected });
+      }
+      currentVaultRoot = corrected;
+      vaultRootFixed++;
+    }
+
+    // 6b. Collapse double vault dirs: if {vaultRoot}/{repoId}/{repoId}/08-Execution exists,
+    //     move all contents up one level to {vaultRoot}/{repoId}/
+    const vaultProject = path.join(currentVaultRoot, repoId);   // correct single-level path
+    const doubleDir    = path.join(vaultProject, repoId);        // legacy double-nested dir
+    const execInDouble = path.join(doubleDir, '08-Execution');
+    if (fs.existsSync(execInDouble) && fs.statSync(execInDouble).isDirectory()) {
+      const items = fs.readdirSync(doubleDir);
+      for (const item of items) {
+        const src = path.join(doubleDir, item);
+        const dst = path.join(vaultProject, item);
+        if (!fs.existsSync(dst)) {
+          fs.renameSync(src, dst);
+        }
+      }
+      // Remove the now-empty double dir
+      try { fs.rmdirSync(doubleDir); } catch (_) { /* ignore if not empty */ }
+      vaultRootFixed++;
+      ok(`Collapsed double vault dir: ${doubleDir} → ${vaultProject}`);
+    }
+  }
+  if (vaultRootFixed > 0) ok(`Migrated ${vaultRootFixed} project(s): vaultRoot path corrected`);
+
   ok('VaultOps is up to date!');
   info('Vault content, project registry, and settings are unchanged.');
 }
