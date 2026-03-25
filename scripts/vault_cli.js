@@ -58,8 +58,8 @@ const ANSI = {
   boldBlue: '\x1b[1;34m',      // primary premium accent (banner ◆)
   // Aliases mapped to cross-terminal-safe values
   cyan:          '\x1b[1;34m', // was 36 (invisible on light) → bold blue
-  green:         '\x1b[1m',    // was 32 (faint on light)     → bold
-  yellow:        '\x1b[1m',    // was 33 (invisible on light)  → bold
+  green:         '\x1b[1;32m', // bold green — visible on both light and dark terminals
+  yellow:        '\x1b[1;33m', // bold yellow — visible on both light and dark terminals
   brightCyan:    '\x1b[34m',   // was 96 (invisible on light)  → plain blue
   brightMagenta: '\x1b[1;35m', // was 95                       → bold magenta
 };
@@ -70,8 +70,8 @@ function color(text, tone) {
 }
 
 function info(text) { console.log(`  ${color('·', 'dim')} ${text}`); }
-function ok(text)   { console.log(`  ${color('✓', 'bold')} ${text}`); }
-function warn(text) { console.log(`  ${color('⚠', 'bold')} ${text}`); }
+function ok(text)   { console.log(`  ${color('✓', 'green')} ${text}`); }
+function warn(text) { console.log(`  ${color('⚠', 'yellow')} ${text}`); }
 function fail(text) { console.error(`  ${color('✗', 'red')} ${text}`); }
 
 // ── Visual helpers (TTY-guarded) ─────────────────────────────────────────
