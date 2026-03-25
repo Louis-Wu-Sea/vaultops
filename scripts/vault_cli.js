@@ -49,16 +49,19 @@ const EXEC_FILES = {
 };
 
 const ANSI = {
-  reset: '\x1b[0m',
-  bold: '\x1b[1m',
-  dim: '\x1b[2m',
-  cyan: '\x1b[36m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
-  red: '\x1b[31m',
-  magenta: '\x1b[35m',
-  brightCyan: '\x1b[96m',
-  brightMagenta: '\x1b[95m',
+  reset:    '\x1b[0m',
+  bold:     '\x1b[1m',
+  dim:      '\x1b[2m',
+  blue:     '\x1b[34m',        // readable on both light and dark terminals
+  red:      '\x1b[31m',        // errors — always high contrast
+  magenta:  '\x1b[35m',        // special accents
+  boldBlue: '\x1b[1;34m',      // primary premium accent (banner ◆)
+  // Aliases mapped to cross-terminal-safe values
+  cyan:          '\x1b[1;34m', // was 36 (invisible on light) → bold blue
+  green:         '\x1b[1m',    // was 32 (faint on light)     → bold
+  yellow:        '\x1b[1m',    // was 33 (invisible on light)  → bold
+  brightCyan:    '\x1b[34m',   // was 96 (invisible on light)  → plain blue
+  brightMagenta: '\x1b[1;35m', // was 95                       → bold magenta
 };
 
 function color(text, tone) {
@@ -66,10 +69,10 @@ function color(text, tone) {
   return `${ANSI[tone] || ''}${text}${ANSI.reset}`;
 }
 
-function info(text) { console.log(`${color('[INFO]', 'cyan')} ${text}`); }
-function ok(text) { console.log(`${color('[OK]', 'green')} ${text}`); }
-function warn(text) { console.log(`${color('[WARN]', 'yellow')} ${text}`); }
-function fail(text) { console.error(`${color('[ERR]', 'red')} ${text}`); }
+function info(text) { console.log(`  ${color('·', 'dim')} ${text}`); }
+function ok(text)   { console.log(`  ${color('✓', 'bold')} ${text}`); }
+function warn(text) { console.log(`  ${color('⚠', 'bold')} ${text}`); }
+function fail(text) { console.error(`  ${color('✗', 'red')} ${text}`); }
 
 // ── Visual helpers (TTY-guarded) ─────────────────────────────────────────
 
@@ -95,11 +98,11 @@ function box(lines, label) {
   } else {
     top = `╔${'═'.repeat(inner)}╗`;
   }
-  console.log(`  ${color(top, 'cyan')}`);
+  console.log(`  ${color(top, 'dim')}`);
   for (const l of arr) {
-    console.log(`  ${color('║', 'cyan')}${_strPad(' ' + l, inner)}${color('║', 'cyan')}`);
+    console.log(`  ${color('║', 'dim')}${_strPad(' ' + l, inner)}${color('║', 'dim')}`);
   }
-  console.log(`  ${color(`╚${'═'.repeat(inner)}╝`, 'cyan')}`);
+  console.log(`  ${color(`╚${'═'.repeat(inner)}╝`, 'dim')}`);
 }
 
 /** Copy-paste command box:  ┌── label ──┐  │ cmd │  └──────────┘ */
@@ -129,12 +132,12 @@ function banner() {
     console.log('◆ VAULTOPS — Project brain for Claude Code');
     return;
   }
-  const v = 'v1.0';
-  const fill = '─'.repeat(Math.max(0, 38 - v.length));
+  const v = 'v1.0.1';
+  const fill = '─'.repeat(Math.max(0, 34 - v.length));
   console.log('');
-  console.log(`  ${color(`◆◆◆ VAULTOPS ${fill} ${v}`, 'cyan')}`);
-  console.log(`  ${color('    Project brain for Claude Code', 'dim')}`);
-  console.log(`  ${color(`${'─'.repeat(50)}◆`, 'dim')}`);
+  console.log(`  ${color('◆', 'boldBlue')}  ${color('VAULTOPS', 'bold')}  ${color(`${fill} ${v}`, 'dim')}`);
+  console.log(`     ${color('Project brain for Claude Code', 'dim')}`);
+  console.log(`  ${color('─'.repeat(50), 'dim')}`);
   console.log('');
 }
 
@@ -176,6 +179,28 @@ function writeJson(filePath, payload) {
 
 function loadProjects() { return readJson(projectsPath, { version: 1, projects: [] }); }
 function saveProjects(registry) { writeJson(projectsPath, registry); }
+
+/**
+ * Locate the Claude Code CLI binary.
+ * Checks known install locations, then falls back to PATH via `which`.
+ * Returns the absolute path, or null if not found.
+ */
+function findClaudeCLI() {
+  const candidates = [
+    path.join(os.homedir(), '.local', 'bin', 'claude'),
+    '/usr/local/bin/claude',
+    '/opt/homebrew/bin/claude',
+  ];
+  for (const p of candidates) {
+    try { fs.accessSync(p, fs.constants.X_OK); return p; } catch { /* not here */ }
+  }
+  // Try PATH via `which`
+  try {
+    const result = spawnSync('which', ['claude'], { encoding: 'utf8' });
+    if (result.status === 0 && result.stdout.trim()) return result.stdout.trim();
+  } catch { /* no which */ }
+  return null;
+}
 
 function createProjectKey(repoId, projectPath) {
   const digest = crypto.createHash('sha1').update(projectPath).digest('hex').slice(0, 8);
@@ -378,6 +403,11 @@ function cmdRepoInit(opts) {
 
   // 4. Add remote if provided
   if (remote) {
+    // Validate remote URL: only allow HTTPS, SSH, and git@ protocols
+    const SAFE_REMOTE_RE = /^(https?:\/\/[^\s;`|&]+|git@[a-zA-Z0-9._-]+:[^\s;`|&]+|ssh:\/\/[^\s;`|&]+)$/;
+    if (!SAFE_REMOTE_RE.test(remote)) {
+      throw new Error(`Invalid remote URL: ${remote}\nOnly HTTPS, SSH (git@...), and ssh:// URLs are allowed.`);
+    }
     // Check if origin already exists
     const remoteCheck = spawnSync('git', ['remote', 'get-url', 'origin'], { cwd: repoPath, stdio: 'pipe' });
     if (remoteCheck.status === 0) {
@@ -462,6 +492,12 @@ function cmdRepoSync(opts) {
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
     spawnSync('git', ['commit', '-m', `vault: sync ${now}`], { cwd: repoPath, stdio: 'pipe' });
     ok('Committed pending changes');
+  }
+
+  // Validate branch name
+  const SAFE_BRANCH_RE = /^[a-zA-Z0-9._\/-]+$/;
+  if (!SAFE_BRANCH_RE.test(branch)) {
+    throw new Error(`Invalid branch name: ${branch}`);
   }
 
   // Pull
@@ -572,18 +608,44 @@ function cmdInit(opts) {
     }
   }
 
-  // 3. Write .mcp.json (merge if exists)
-  const mcpJsonPath = path.join(projectPath, '.mcp.json');
-  const mcpConfig = readJson(mcpJsonPath, { mcpServers: {} });
-  mcpConfig.mcpServers = mcpConfig.mcpServers || {};
-  mcpConfig.mcpServers.vaultops = {
-    type: 'stdio',
-    command: 'python3',
-    args: ['-u', path.join(installDir, 'scripts', 'vaultops_mcp_server.py')],
-    env: { VAULTOPS_PROJECTS_JSON: projectsPath, PYTHONUNBUFFERED: '1' },
-  };
-  writeJson(mcpJsonPath, mcpConfig);
-  ok(`Written ${mcpJsonPath} (stdio mode)`);
+  // 3. Register MCP server
+  // Preferred: 'claude mcp add -s user' (user scope, no trust dialog required).
+  // Fallback: write .mcp.json (project scope, requires trust dialog approval).
+  const nodeBin = process.execPath; // absolute path of the node binary running this script
+  const indexPath = path.join(installDir, 'scripts', 'compiled', 'index.js');
+  const claudeBin = findClaudeCLI();
+  if (claudeBin) {
+    // Remove existing user-scope entry first (ignore errors)
+    spawnSync(claudeBin, ['mcp', 'remove', 'vaultops', '-s', 'user'], { stdio: 'pipe' });
+    const addResult = spawnSync(
+      claudeBin,
+      ['mcp', 'add', '-s', 'user', '-e', `VAULTOPS_PROJECTS_JSON=${projectsPath}`, '--', 'vaultops', nodeBin, indexPath],
+      { stdio: 'pipe' },
+    );
+    if (addResult.status === 0) {
+      ok('Registered MCP server at user scope (claude mcp add -s user)');
+    } else {
+      warn(`claude mcp add failed: ${(addResult.stderr || addResult.stdout || '').toString().trim()}`);
+      warn('Falling back to .mcp.json — approve in Claude Code trust dialog');
+      _writeMcpJson(projectPath, nodeBin, indexPath, projectsPath);
+    }
+  } else {
+    _writeMcpJson(projectPath, nodeBin, indexPath, projectsPath);
+  }
+
+  function _writeMcpJson(projPath, nodeB, idxPath, projsPath) {
+    const mcpJsonPath = path.join(projPath, '.mcp.json');
+    const mcpConfig = readJson(mcpJsonPath, { mcpServers: {} });
+    mcpConfig.mcpServers = mcpConfig.mcpServers || {};
+    mcpConfig.mcpServers.vaultops = {
+      type: 'stdio',
+      command: nodeB,
+      args: [idxPath],
+      env: { VAULTOPS_PROJECTS_JSON: projsPath },
+    };
+    writeJson(mcpJsonPath, mcpConfig);
+    ok(`Written ${mcpJsonPath} (studio mode — approve in Claude Code trust dialog)`);
+  }
 
   // 4. Install skills globally to ~/.claude/skills/ (once, not per-repo)
   const skillsSource = path.join(installDir, 'skills');
@@ -607,11 +669,21 @@ function cmdInit(opts) {
   const claudeSettings = readJson(claudeSettingsPath, {});
   if (!claudeSettings.hooks) claudeSettings.hooks = {};
 
+  // Remove all legacy Python VaultOps hook entries (migration: Python → Node.js).
+  // Python hooks used underscores + .py, e.g. session_init.py, pre_context.py.
+  for (const event of Object.keys(claudeSettings.hooks)) {
+    claudeSettings.hooks[event] = claudeSettings.hooks[event].filter(
+      (h) => !(h.hooks && h.hooks.some(
+        (hh) => hh.command && hh.command.includes('.vaultops/scripts/hooks/') && hh.command.includes('.py'),
+      )),
+    );
+  }
+
   // Helper: register or update a hook entry
   // Use $HOME so the command works on any machine (no hardcoded absolute paths)
   const registerHook = (event, matcher, scriptName) => {
     if (!claudeSettings.hooks[event]) claudeSettings.hooks[event] = [];
-    const hookCmd = `python3 "$HOME/.vaultops/scripts/hooks/${scriptName}"`;
+    const hookCmd = `node "$HOME/.vaultops/scripts/compiled/hooks/${scriptName}"`;
     const existingIdx = claudeSettings.hooks[event].findIndex(
       (h) => h.hooks && h.hooks.some((hh) => hh.command && hh.command.includes(scriptName)),
     );
@@ -626,30 +698,29 @@ function cmdInit(opts) {
     }
   };
 
-  // SessionStart hook — initialize brain state + load active tasks (NEW)
-  registerHook('SessionStart', null, 'session_init.py');
+  // SessionStart hook — initialize brain state + load active tasks
+  registerHook('SessionStart', null, 'session-init.js');
 
-  // UserPromptSubmit hook — intent classification + auto-task creation (NEW)
-  registerHook('UserPromptSubmit', null, 'prompt_analyzer.py');
+  // UserPromptSubmit hook — intent classification + auto-task creation
+  registerHook('UserPromptSubmit', null, 'prompt-analyzer.js');
 
   // PreToolUse hook — inject context + track files + architecture detection
-  registerHook('PreToolUse', 'Edit|Write|Bash', 'pre_context.py');
+  registerHook('PreToolUse', 'Edit|Write|Bash', 'pre-context.js');
 
   // PostToolUse hook — log steps + collect evidence (tests, commits)
-  registerHook('PostToolUse', 'Edit|Write|Bash', 'post_log.py');
+  registerHook('PostToolUse', 'Edit|Write|Bash', 'post-log.js');
 
   // Stop hook — auto-complete tasks + rich session receipt
-  registerHook('Stop', null, 'session_summary.py');
+  registerHook('Stop', null, 'session-summary.js');
 
   // Stop hook — vault janitor (runs after session_summary, cleans up garbage)
-  registerHook('Stop', null, 'vault_janitor.py');
+  registerHook('Stop', null, 'vault-janitor.js');
 
   // Permissions — allow VaultOps runtime commands without prompting
   if (!claudeSettings.permissions) claudeSettings.permissions = {};
   if (!claudeSettings.permissions.allow) claudeSettings.permissions.allow = [];
   const vaultopsAllows = [
-    'Bash(python3 *)',
-    'Bash(python *)',
+    'Bash(node *)',
     'Bash(vaultops *)',
     'Bash(ls */.vaultops/*)',
     'Bash(ls */.vaultops/vault/*)',
@@ -727,20 +798,20 @@ Use mcp__vaultops__* tools for all vault operations (get_context, create_task, u
     `   Skills   18 commands active in Claude Code`,
   ]);
   console.log('');
-  console.log(`  ${color('⚡', 'yellow')} Start here — generate project docs:`);
+  console.log(`  ${color('→', 'dim')} Start here — generate project docs:`);
   cmdBox('/vault:docs');
   console.log(`    AI scans your code ${color('→', 'dim')} writes architecture,`);
   console.log(`    API docs, runbook, codebase map to Obsidian.`);
   console.log('');
   console.log(`  ${color('─── All skills ────────────────────────────────', 'dim')}`);
-  console.log(`   ${color('/vault:docs', 'cyan')}      Generate full project documentation  ${color('← start', 'dim')}`);
-  console.log(`   ${color('/vault:today', 'cyan')}     Daily task dashboard`);
-  console.log(`   ${color('/vault:task', 'cyan')}      Create, update, link tasks`);
-  console.log(`   ${color('/vault:plan', 'cyan')}      Write a work plan`);
-  console.log(`   ${color('/vault:kanban', 'cyan')}    Visual task board`);
-  console.log(`   ${color('/vault:sprint', 'cyan')}    Sprint planning & burndown`);
-  console.log(`   ${color('/vault:enrich', 'cyan')}    BA → Designer → Dev → QA analysis`);
-  console.log(`   ${color('/vault:context', 'cyan')}   Full project context check`);
+  console.log(`   ${color('/vault:docs', 'bold')}      Generate full project documentation  ${color('← start', 'dim')}`);
+  console.log(`   ${color('/vault:today', 'bold')}     Daily task dashboard`);
+  console.log(`   ${color('/vault:task', 'bold')}      Create, update, link tasks`);
+  console.log(`   ${color('/vault:plan', 'bold')}      Write a work plan`);
+  console.log(`   ${color('/vault:kanban', 'bold')}    Visual task board`);
+  console.log(`   ${color('/vault:sprint', 'bold')}    Sprint planning & burndown`);
+  console.log(`   ${color('/vault:enrich', 'bold')}    BA → Designer → Dev → QA analysis`);
+  console.log(`   ${color('/vault:context', 'bold')}   Full project context check`);
   console.log('');
   console.log(`   ${color('vaultops open', 'bold')}    Open Obsidian vault`);
   console.log('');
@@ -960,7 +1031,7 @@ function cmdStatus(opts) {
     return;
   }
   for (const entry of registry.projects) {
-    console.log(`- ${color(entry.repoId, 'cyan')}`);
+    console.log(`- ${color(entry.repoId, 'bold')}`);
     console.log(`  path: ${entry.path}`);
     console.log(`  vault: ${entry.vaultRoot || '-'}`);
     console.log(`  init: ${entry.lastInitAt || '-'}`);
@@ -1080,13 +1151,13 @@ function cmdUninstall(opts) {
 
     if (!yes) {
       console.log('');
-      console.log(color('⚠  --purge will permanently delete:', 'yellow'));
+      console.log(color('⚠  --purge will permanently delete:', 'bold'));
       console.log(`   ${installDir}`);
       if (hasVaultData) {
         console.log(color(`   including vault data at ${vaultDataDir}`, 'red'));
       }
       console.log('');
-      console.log(`Run with ${color('--yes', 'cyan')} to confirm: vaultops uninstall --purge --yes`);
+      console.log(`Run with ${color('--yes', 'bold')} to confirm: vaultops uninstall --purge --yes`);
       return;
     }
 
@@ -1133,9 +1204,14 @@ function cmdOpen(opts) {
     (e) => path.resolve(e.path) === path.resolve(projectPath)
   );
 
-  const vaultRoot = (found && found.vaultRoot) || DEFAULT_VAULT_ROOT;
-  const vaultName = path.basename(vaultRoot);
-  const uri = `obsidian://open?vault=${encodeURIComponent(vaultName)}`;
+  const vaultRoot = DEFAULT_VAULT_ROOT;
+  // Navigate to project's task board if project is registered, else vault root
+  const repoId = found ? path.basename(found.path) : null;
+  // Use obsidian://open?path= (absolute path) — works even if vault was never opened in Obsidian UI
+  const absolutePath = repoId
+    ? path.join(vaultRoot, repoId, '08-Execution', 'Task Board.md')
+    : vaultRoot;
+  const uri = `obsidian://open?path=${encodeURIComponent(absolutePath)}`;
 
   info(`Opening Obsidian vault: ${vaultRoot}`);
 
@@ -1323,11 +1399,11 @@ function printHelp() {
   console.log('    --yes / -y                Skip confirmation for destructive ops');
   console.log('');
   console.log('After setup, use in Claude Code:');
-  console.log(`  ${color('/vault:today', 'cyan')}   — daily task checklist`);
-  console.log(`  ${color('/vault:task', 'cyan')}    — create/update tasks (EXE-### IDs)`);
-  console.log(`  ${color('/vault:plan', 'cyan')}    — write work plans`);
-  console.log(`  ${color('/vault:kanban', 'cyan')}  — Kanban board view`);
-  console.log(`  ${color('/vault:docs', 'cyan')}    — generate project documentation`);
+  console.log(`  ${color('/vault:today', 'bold')}   — daily task checklist`);
+  console.log(`  ${color('/vault:task', 'bold')}    — create/update tasks (EXE-### IDs)`);
+  console.log(`  ${color('/vault:plan', 'bold')}    — write work plans`);
+  console.log(`  ${color('/vault:kanban', 'bold')}  — Kanban board view`);
+  console.log(`  ${color('/vault:docs', 'bold')}    — generate project documentation`);
   console.log('');
   console.log('Options:');
   console.log('  --vault-root <path>      Obsidian vault root (default: ~/.vaultops/vault)');

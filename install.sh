@@ -39,12 +39,12 @@ ensure_node() {
   if command -v node >/dev/null 2>&1; then return 0; fi
   if [[ "$OS_TYPE" == "Darwin" ]]; then
     _warn "Node.js not found. Installing via Homebrew..."
-    if ensure_brew && brew install node@20 && brew link node@20 --force --overwrite 2>/dev/null; then
+    if ensure_brew && brew install node@22 && brew link node@22 --force --overwrite 2>/dev/null; then
       _ok "Node.js $(node --version) installed"
       return 0
     fi
     _err "Could not install Node.js automatically."
-    _err "Please install it manually (version 18+ required): https://nodejs.org"
+    _err "Please install it manually (version 20+ required): https://nodejs.org"
     _err "Then re-run the installer."
     exit 1
   else
@@ -52,26 +52,6 @@ ensure_node() {
     _err "  Ubuntu/Debian:  sudo apt install nodejs npm"
     _err "  Fedora/RHEL:    sudo dnf install nodejs"
     _err "  Or download:    https://nodejs.org"
-    exit 1
-  fi
-}
-
-ensure_python() {
-  if command -v python3 >/dev/null 2>&1; then return 0; fi
-  if [[ "$OS_TYPE" == "Darwin" ]]; then
-    _warn "Python 3 not found. Installing via Homebrew..."
-    if ensure_brew && brew install python; then
-      _ok "$(python3 --version) installed"
-      return 0
-    fi
-    _err "Could not install Python automatically."
-    _err "Please install it manually: https://www.python.org/downloads/"
-    _err "Then re-run the installer."
-    exit 1
-  else
-    _err "Python 3 is required but was not found."
-    _err "  Ubuntu/Debian:  sudo apt install python3"
-    _err "  Fedora/RHEL:    sudo dnf install python3"
     exit 1
   fi
 }
@@ -132,6 +112,7 @@ else
   echo "Installing VaultOps to ${INSTALL_DIR}..."
 fi
 TMP_TAR="$(mktemp "${TMPDIR:-/tmp}/vaultops-install-XXXXXX.tar.gz")"
+chmod 600 "$TMP_TAR"
 TMP_SUM="${TMP_TAR}.sha256"
 trap 'rm -f "$TMP_TAR" "$TMP_SUM"' EXIT
 curl -fsSL --output "$TMP_TAR" "$DIST_URL"
@@ -152,7 +133,6 @@ tar xz -C "$INSTALL_DIR" -f "$TMP_TAR"
 
 # 2. Ensure runtime dependencies
 ensure_node
-ensure_python
 
 VAULTOPS_INSTALL_DIR="$INSTALL_DIR" node "${INSTALL_DIR}/scripts/vault_cli.js" install --no-update
 

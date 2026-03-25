@@ -23,9 +23,8 @@ Include:
 ## Scope
 
 This policy covers:
-- `scripts/vaultops_mcp_server.py` — MCP server
+- `src/` — TypeScript MCP server and hooks (compiled to `scripts/compiled/`)
 - `scripts/vault_cli.js` — CLI tool
-- `scripts/hooks/` — Claude Code hooks
 - `install.sh` — installer script
 
 ## Design Principles
@@ -33,5 +32,5 @@ This policy covers:
 VaultOps is designed with security in mind:
 - **Local-first**: all data stored in local Obsidian markdown files
 - **No network calls**: core functionality works fully offline
-- **No dependencies**: MCP server (Python stdlib) and CLI (Node.js stdlib) have zero third-party dependencies
+- **No runtime dependencies**: MCP server (TypeScript/Node.js stdlib) and CLI (Node.js stdlib) have zero third-party runtime dependencies
 - **No telemetry**: no usage tracking or analytics

@@ -16,12 +16,15 @@ state/
 # VaultOps local config (may contain secrets)
 .vaultops/
 
-# PyInstaller build artifacts
+# Compiled TypeScript output (rebuilt from src/)
+scripts/compiled/
+
+# PyInstaller build artifacts (legacy)
 build/
 *.spec
 .env*.local
 
-# Python bytecode
+# Python bytecode (legacy)
 __pycache__/
 *.pyc
 *.pyo
