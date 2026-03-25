@@ -1205,13 +1205,9 @@ function cmdOpen(opts) {
   );
 
   const vaultRoot = DEFAULT_VAULT_ROOT;
-  // Navigate to project's task board if project is registered, else vault root
-  const repoId = found ? path.basename(found.path) : null;
-  // Use obsidian://open?path= (absolute path) — works even if vault was never opened in Obsidian UI
-  const absolutePath = repoId
-    ? path.join(vaultRoot, repoId, '08-Execution', 'Task Board.md')
-    : vaultRoot;
-  const uri = `obsidian://open?path=${encodeURIComponent(absolutePath)}`;
+  // Always open the top-level vault directory to avoid "Vault not found" errors
+  // when Obsidian hasn't registered the vault yet or when a specific file is missing
+  const uri = `obsidian://open?path=${encodeURIComponent(vaultRoot)}`;
 
   info(`Opening Obsidian vault: ${vaultRoot}`);
 
