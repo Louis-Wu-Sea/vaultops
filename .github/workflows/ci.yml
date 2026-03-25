@@ -11,34 +11,37 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node: [18, 20, 22]
-        python: ["3.9", "3.12"]
+        node: [22, 24]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python }}
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Verify MCP server loads
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build compiled output
+        run: npx tsc
+
+      - name: Verify MCP server loads (43 tools)
         run: |
-          python3 -c "
-          import sys; sys.path.insert(0, 'scripts')
-          import vaultops_mcp_server as m
-          tools = m._tools_list_result()['tools']
-          print(f'{len(tools)} tools loaded')
-          assert len(tools) >= 43, f'Expected >=43 tools, got {len(tools)}'
+          node -e "
+            const {listTools} = require('./scripts/compiled/tools/index.js');
+            const t = listTools().tools;
+            console.log(t.length + ' tools loaded');
+            if (t.length < 43) { console.error('Expected >=43 tools, got ' + t.length); process.exit(1); }
           "
 
       - name: Verify CLI runs
         run: node scripts/vault_cli.js --help
-
-      - name: Check Python syntax
-        run: python3 -m py_compile scripts/vaultops_mcp_server.py
 
       - name: Check JS syntax
         run: node --check scripts/vault_cli.js

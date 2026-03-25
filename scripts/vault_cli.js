@@ -177,6 +177,28 @@ function writeJson(filePath, payload) {
 function loadProjects() { return readJson(projectsPath, { version: 1, projects: [] }); }
 function saveProjects(registry) { writeJson(projectsPath, registry); }
 
+/**
+ * Locate the Claude Code CLI binary.
+ * Checks known install locations, then falls back to PATH via `which`.
+ * Returns the absolute path, or null if not found.
+ */
+function findClaudeCLI() {
+  const candidates = [
+    path.join(os.homedir(), '.local', 'bin', 'claude'),
+    '/usr/local/bin/claude',
+    '/opt/homebrew/bin/claude',
+  ];
+  for (const p of candidates) {
+    try { fs.accessSync(p, fs.constants.X_OK); return p; } catch { /* not here */ }
+  }
+  // Try PATH via `which`
+  try {
+    const result = spawnSync('which', ['claude'], { encoding: 'utf8' });
+    if (result.status === 0 && result.stdout.trim()) return result.stdout.trim();
+  } catch { /* no which */ }
+  return null;
+}
+
 function createProjectKey(repoId, projectPath) {
   const digest = crypto.createHash('sha1').update(projectPath).digest('hex').slice(0, 8);
   return `${sanitizeRepoId(repoId)}-${digest}`;
@@ -378,6 +400,11 @@ function cmdRepoInit(opts) {
 
   // 4. Add remote if provided
   if (remote) {
+    // Validate remote URL: only allow HTTPS, SSH, and git@ protocols
+    const SAFE_REMOTE_RE = /^(https?:\/\/[^\s;`|&]+|git@[a-zA-Z0-9._-]+:[^\s;`|&]+|ssh:\/\/[^\s;`|&]+)$/;
+    if (!SAFE_REMOTE_RE.test(remote)) {
+      throw new Error(`Invalid remote URL: ${remote}\nOnly HTTPS, SSH (git@...), and ssh:// URLs are allowed.`);
+    }
     // Check if origin already exists
     const remoteCheck = spawnSync('git', ['remote', 'get-url', 'origin'], { cwd: repoPath, stdio: 'pipe' });
     if (remoteCheck.status === 0) {
@@ -462,6 +489,12 @@ function cmdRepoSync(opts) {
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
     spawnSync('git', ['commit', '-m', `vault: sync ${now}`], { cwd: repoPath, stdio: 'pipe' });
     ok('Committed pending changes');
+  }
+
+  // Validate branch name
+  const SAFE_BRANCH_RE = /^[a-zA-Z0-9._\/-]+$/;
+  if (!SAFE_BRANCH_RE.test(branch)) {
+    throw new Error(`Invalid branch name: ${branch}`);
   }
 
   // Pull
@@ -572,18 +605,44 @@ function cmdInit(opts) {
     }
   }
 
-  // 3. Write .mcp.json (merge if exists)
-  const mcpJsonPath = path.join(projectPath, '.mcp.json');
-  const mcpConfig = readJson(mcpJsonPath, { mcpServers: {} });
-  mcpConfig.mcpServers = mcpConfig.mcpServers || {};
-  mcpConfig.mcpServers.vaultops = {
-    type: 'stdio',
-    command: 'python3',
-    args: ['-u', path.join(installDir, 'scripts', 'vaultops_mcp_server.py')],
-    env: { VAULTOPS_PROJECTS_JSON: projectsPath, PYTHONUNBUFFERED: '1' },
-  };
-  writeJson(mcpJsonPath, mcpConfig);
-  ok(`Written ${mcpJsonPath} (stdio mode)`);
+  // 3. Register MCP server
+  // Preferred: 'claude mcp add -s user' (user scope, no trust dialog required).
+  // Fallback: write .mcp.json (project scope, requires trust dialog approval).
+  const nodeBin = process.execPath; // absolute path of the node binary running this script
+  const indexPath = path.join(installDir, 'scripts', 'compiled', 'index.js');
+  const claudeBin = findClaudeCLI();
+  if (claudeBin) {
+    // Remove existing user-scope entry first (ignore errors)
+    spawnSync(claudeBin, ['mcp', 'remove', 'vaultops', '-s', 'user'], { stdio: 'pipe' });
+    const addResult = spawnSync(
+      claudeBin,
+      ['mcp', 'add', '-s', 'user', '-e', `VAULTOPS_PROJECTS_JSON=${projectsPath}`, '--', 'vaultops', nodeBin, indexPath],
+      { stdio: 'pipe' },
+    );
+    if (addResult.status === 0) {
+      ok('Registered MCP server at user scope (claude mcp add -s user)');
+    } else {
+      warn(`claude mcp add failed: ${(addResult.stderr || addResult.stdout || '').toString().trim()}`);
+      warn('Falling back to .mcp.json — approve in Claude Code trust dialog');
+      _writeMcpJson(projectPath, nodeBin, indexPath, projectsPath);
+    }
+  } else {
+    _writeMcpJson(projectPath, nodeBin, indexPath, projectsPath);
+  }
+
+  function _writeMcpJson(projPath, nodeB, idxPath, projsPath) {
+    const mcpJsonPath = path.join(projPath, '.mcp.json');
+    const mcpConfig = readJson(mcpJsonPath, { mcpServers: {} });
+    mcpConfig.mcpServers = mcpConfig.mcpServers || {};
+    mcpConfig.mcpServers.vaultops = {
+      type: 'stdio',
+      command: nodeB,
+      args: [idxPath],
+      env: { VAULTOPS_PROJECTS_JSON: projsPath },
+    };
+    writeJson(mcpJsonPath, mcpConfig);
+    ok(`Written ${mcpJsonPath} (studio mode — approve in Claude Code trust dialog)`);
+  }
 
   // 4. Install skills globally to ~/.claude/skills/ (once, not per-repo)
   const skillsSource = path.join(installDir, 'skills');
@@ -607,11 +666,21 @@ function cmdInit(opts) {
   const claudeSettings = readJson(claudeSettingsPath, {});
   if (!claudeSettings.hooks) claudeSettings.hooks = {};
 
+  // Remove all legacy Python VaultOps hook entries (migration: Python → Node.js).
+  // Python hooks used underscores + .py, e.g. session_init.py, pre_context.py.
+  for (const event of Object.keys(claudeSettings.hooks)) {
+    claudeSettings.hooks[event] = claudeSettings.hooks[event].filter(
+      (h) => !(h.hooks && h.hooks.some(
+        (hh) => hh.command && hh.command.includes('.vaultops/scripts/hooks/') && hh.command.includes('.py'),
+      )),
+    );
+  }
+
   // Helper: register or update a hook entry
   // Use $HOME so the command works on any machine (no hardcoded absolute paths)
   const registerHook = (event, matcher, scriptName) => {
     if (!claudeSettings.hooks[event]) claudeSettings.hooks[event] = [];
-    const hookCmd = `python3 "$HOME/.vaultops/scripts/hooks/${scriptName}"`;
+    const hookCmd = `node "$HOME/.vaultops/scripts/compiled/hooks/${scriptName}"`;
     const existingIdx = claudeSettings.hooks[event].findIndex(
       (h) => h.hooks && h.hooks.some((hh) => hh.command && hh.command.includes(scriptName)),
     );
@@ -626,30 +695,29 @@ function cmdInit(opts) {
     }
   };
 
-  // SessionStart hook — initialize brain state + load active tasks (NEW)
-  registerHook('SessionStart', null, 'session_init.py');
+  // SessionStart hook — initialize brain state + load active tasks
+  registerHook('SessionStart', null, 'session-init.js');
 
-  // UserPromptSubmit hook — intent classification + auto-task creation (NEW)
-  registerHook('UserPromptSubmit', null, 'prompt_analyzer.py');
+  // UserPromptSubmit hook — intent classification + auto-task creation
+  registerHook('UserPromptSubmit', null, 'prompt-analyzer.js');
 
   // PreToolUse hook — inject context + track files + architecture detection
-  registerHook('PreToolUse', 'Edit|Write|Bash', 'pre_context.py');
+  registerHook('PreToolUse', 'Edit|Write|Bash', 'pre-context.js');
 
   // PostToolUse hook — log steps + collect evidence (tests, commits)
-  registerHook('PostToolUse', 'Edit|Write|Bash', 'post_log.py');
+  registerHook('PostToolUse', 'Edit|Write|Bash', 'post-log.js');
 
   // Stop hook — auto-complete tasks + rich session receipt
-  registerHook('Stop', null, 'session_summary.py');
+  registerHook('Stop', null, 'session-summary.js');
 
   // Stop hook — vault janitor (runs after session_summary, cleans up garbage)
-  registerHook('Stop', null, 'vault_janitor.py');
+  registerHook('Stop', null, 'vault-janitor.js');
 
   // Permissions — allow VaultOps runtime commands without prompting
   if (!claudeSettings.permissions) claudeSettings.permissions = {};
   if (!claudeSettings.permissions.allow) claudeSettings.permissions.allow = [];
   const vaultopsAllows = [
-    'Bash(python3 *)',
-    'Bash(python *)',
+    'Bash(node *)',
     'Bash(vaultops *)',
     'Bash(ls */.vaultops/*)',
     'Bash(ls */.vaultops/vault/*)',
@@ -1133,7 +1201,7 @@ function cmdOpen(opts) {
     (e) => path.resolve(e.path) === path.resolve(projectPath)
   );
 
-  const vaultRoot = (found && found.vaultRoot) || DEFAULT_VAULT_ROOT;
+  const vaultRoot = DEFAULT_VAULT_ROOT;
   const vaultName = path.basename(vaultRoot);
   const uri = `obsidian://open?vault=${encodeURIComponent(vaultName)}`;
 
