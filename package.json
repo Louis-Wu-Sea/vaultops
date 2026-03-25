@@ -26,6 +26,14 @@
   },
   "scripts": {
     "vaultops": "node ./scripts/vault_cli.js",
-    "build": "node scripts/build-dist.js"
+    "build:ts": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/**/*.test.ts",
+    "build": "npm run build:ts && node scripts/build-dist.js"
+  },
+  "devDependencies": {
+    "typescript": "^5.7",
+    "tsx": "^4.19",
+    "@types/node": "^22"
   }
 }
