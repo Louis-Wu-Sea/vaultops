@@ -624,6 +624,17 @@ function cmdInit(opts) {
     );
     if (addResult.status === 0) {
       ok('Registered MCP server at user scope (claude mcp add -s user)');
+      // Remove stale vaultops entry from .mcp.json (old Python config or duplicate project-scope)
+      // to prevent Claude Code from loading both configs simultaneously.
+      const mcpJsonPath = path.join(projectPath, '.mcp.json');
+      if (fs.existsSync(mcpJsonPath)) {
+        const mcpCfg = readJson(mcpJsonPath, { mcpServers: {} });
+        if (mcpCfg.mcpServers && mcpCfg.mcpServers.vaultops) {
+          delete mcpCfg.mcpServers.vaultops;
+          writeJson(mcpJsonPath, mcpCfg);
+          ok('Removed stale vaultops entry from .mcp.json (user-scope registration is active)');
+        }
+      }
     } else {
       warn(`claude mcp add failed: ${(addResult.stderr || addResult.stdout || '').toString().trim()}`);
       warn('Falling back to .mcp.json — approve in Claude Code trust dialog');
@@ -978,7 +989,7 @@ function cmdUpdate(_opts) {
   }
   if (refreshed > 0) ok(`Repaired settings for ${refreshed} project(s) (hook paths + permissions)`);
 
-  // Step 5: Patch .mcp.json in all registered projects for unbuffered stdio
+  // Step 5: Migrate .mcp.json Python entries → Node.js in all registered projects
   let mcpPatched = 0;
   for (const proj of registry.projects || []) {
     const mcpPath = path.join(proj.path, '.mcp.json');
@@ -986,19 +997,21 @@ function cmdUpdate(_opts) {
     const mcpCfg = readJson(mcpPath, { mcpServers: {} });
     const vo = mcpCfg.mcpServers && mcpCfg.mcpServers.vaultops;
     if (!vo) continue;
-    let changed = false;
-    if (Array.isArray(vo.args) && vo.args[0] !== '-u') {
-      vo.args.unshift('-u');
-      changed = true;
+    const isPython =
+      (vo.command && vo.command.includes('python')) ||
+      (Array.isArray(vo.args) && vo.args.some((a) => String(a).endsWith('.py')));
+    if (isPython) {
+      mcpCfg.mcpServers.vaultops = {
+        type: 'stdio',
+        command: process.execPath,
+        args: [path.join(installDir, 'scripts', 'compiled', 'index.js')],
+        env: { VAULTOPS_PROJECTS_JSON: projectsPath },
+      };
+      writeJson(mcpPath, mcpCfg);
+      mcpPatched++;
     }
-    if (!vo.env) vo.env = {};
-    if (vo.env.PYTHONUNBUFFERED !== '1') {
-      vo.env.PYTHONUNBUFFERED = '1';
-      changed = true;
-    }
-    if (changed) { writeJson(mcpPath, mcpCfg); mcpPatched++; }
   }
-  if (mcpPatched > 0) ok(`Patched .mcp.json for ${mcpPatched} project(s) (unbuffered stdio)`);
+  if (mcpPatched > 0) ok(`Migrated ${mcpPatched} project(s): .mcp.json Python → Node.js`);
 
   ok('VaultOps is up to date!');
   info('Vault content, project registry, and settings are unchanged.');
