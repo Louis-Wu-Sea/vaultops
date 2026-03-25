@@ -6,9 +6,8 @@
  *   dist/
  *   ├── scripts/
  *   │   ├── vault_cli.js
- *   │   ├── vaultops_mcp_server.py
- *   │   ├── cli/dashboard/
- *   │   └── hooks/
+ *   │   ├── compiled/        (TypeScript MCP server + hooks)
+ *   │   └── cli/dashboard/
  *   └── skills/
  */
 
@@ -25,12 +24,18 @@ const COPY_DIRS = [
   'skills',
 ];
 
+// Skip Python files and build artifacts during copy
+const SKIP_FILES = new Set(['build-dist.js', 'build-landing.sh']);
+const SKIP_EXTENSIONS = new Set(['.py', '.pyc']);
+
 function copyDir(src, dest) {
   if (!fs.existsSync(src)) return;
   fs.mkdirSync(dest, { recursive: true });
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-    if (entry.name === 'build-dist.js') continue;
-    if (entry.name === 'build-landing.sh') continue;
+    if (SKIP_FILES.has(entry.name)) continue;
+    if (SKIP_EXTENSIONS.has(path.extname(entry.name))) continue;
+    // Skip __pycache__ directories
+    if (entry.name === '__pycache__') continue;
     const srcPath = path.join(src, entry.name);
     const destPath = path.join(dest, entry.name);
     if (entry.isDirectory()) {
