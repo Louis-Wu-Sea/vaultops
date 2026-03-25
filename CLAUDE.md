@@ -1,0 +1,203 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code when working in this repository.
+
+## What is VaultOps
+
+VaultOps is a **Claude Code plugin** — a project brain for AI. It provides:
+- An MCP server with 43 tools for task management, meeting notes, role enrichment, sprint planning, canvas generation, and cross-project intelligence
+- 27 skills as Claude Code slash commands (all prefixed `vault:` — e.g., `/vault:docs`, `/vault:task`, `/vault:meeting`)
+- Automatic hooks for context injection and execution logging
+- A CLI (`vaultops`) for project onboarding and a TUI dashboard
+- All data stored in local Obsidian markdown files with YAML frontmatter
+
+## Repository Layout
+
+| Path | Purpose |
+|------|---------|
+| `scripts/vaultops_mcp_server.py` | MCP server (Python, stdlib only, 43 tools, JSON-RPC 2.0 stdio/http) |
+| `scripts/vault_cli.js` | CLI entry point (Node.js, zero deps) |
+| `scripts/cli/dashboard/` | TUI dashboard (controller, render, collector, parsers) |
+| `scripts/hooks/` | Claude Code hooks (pre_context, post_log, session_summary) |
+| `skills/` | 14 Claude Code skill definitions (SKILL.md files) |
+| `install.sh` | One-command installer (with Obsidian auto-setup) |
+| `public/` | Landing page (static HTML/CSS/JS) |
+
+## Commands
+
+```bash
+# Install globally (offers to install Obsidian on macOS)
+./install.sh --global-only
+
+# Add a project (creates vault, MCP config, skills, hooks)
+cd /path/to/repo && vaultops add
+
+# Re-initialize (idempotent)
+vaultops init
+
+# Show registered projects
+vaultops status
+
+# TUI dashboard
+vaultops dashboard
+
+# Standalone doc repo (no code project needed)
+vaultops repo init ~/design-docs --remote git@github.com:org/docs.git
+
+# Sync doc repo with remote
+vaultops repo sync
+
+# List registered doc repos
+vaultops repo status
+```
+
+## MCP Server Tools (43 total)
+
+### Core (8)
+- `get_context` — project stage + context state + task summary
+- `get_today` — active tasks as checklist
+- `create_task` — auto-increment EXE-### with individual task file + YAML frontmatter, supports Task-as-Code `verify:` contracts
+- `update_task` — syncs status/evidence to both Task Board and task file
+- `log_step` — timestamped Execution Journal entry
+- `write_plan` — append to Work Plans
+- `get_kanban` — tasks by status columns
+- `generate_docs_prompt` — AI prompt for documentation generation
+
+### Role Enrichment (3)
+- `get_task` — full task details + role outputs + enrichment status
+- `write_role_output` — write BA/Designer/SystemAnalyst/Developer/QA output with frontmatter
+- `get_role_output` — read specific role output
+
+### Task Relationships (2)
+- `link_tasks` — create dependency (blocked-by, blocks, subtask-of, parent-of, related-to)
+- `get_task_graph` — dependency tree + Mermaid diagram
+
+### Sprint & Scheduling (5)
+- `schedule_task` — assign task to a date
+- `get_schedule` — tasks for date range + overdue
+- `create_sprint` — sprint definition file
+- `assign_to_sprint` — attach tasks to sprint
+- `get_sprint` — sprint details with live task statuses
+
+### Cross-Project (3)
+- `search_tasks` — search across all registered projects
+- `create_cross_project_link` — link tasks between projects
+- `get_cross_project_deps` — cross-project dependency graph + Mermaid
+
+### Metrics (2)
+- `get_velocity` — completion velocity, cycle time, throughput
+- `get_burndown` — sprint burndown data + Mermaid chart
+
+### Task-as-Code (1)
+- `run_verify` — execute verify checks from task frontmatter (file_exists, file_changed, grep_content, test_pattern)
+
+### Predictive Brain (1)
+- `get_predictions` — forecast cycle time, risk, and priority based on historical patterns
+
+### Adaptive Roles (1)
+- `get_project_dna` — analyze role outputs to build project style profile (stack, testing, design patterns)
+
+### Visual & Agile (2)
+- `generate_canvas` — Obsidian .canvas files (kanban, sprint, dependencies, architecture boards)
+- `generate_retro` — generative sprint retrospective with auto-analyzed data (cycle times, role impact, verify adoption)
+
+### Ecosystem & Visibility (4)
+- `get_replay` — session replay digest (completed tasks, journal entries, stale docs)
+- `get_stale_docs` — detect documentation that may be outdated
+- `get_arch_radar` — architecture radar (coupling patterns, hotspots, ADR suggestions)
+- `generate_report` — standalone HTML report for stakeholders (SVG charts, zero dependencies)
+
+### Meeting Notes (7)
+- `create_meeting` — create meeting note from template with auto-incremented MTG-### ID
+- `get_meeting` — read meeting by ID or date
+- `dispatch_action_items` — parse action items table → create tasks in target projects
+- `link_decision_to_adr` — link meeting decision to project ADR
+- `create_followup` — create scheduled follow-up task tagged with meeting ID
+- `get_meeting_dashboard` — recent meetings, undispatched items, overdue follow-ups
+- `get_meeting_series` — list or create recurring meeting series
+
+## Skills (27 total)
+
+All skills are prefixed with `vault:` for easy identification in Claude Code.
+
+| Skill | Purpose |
+|-------|---------|
+| `/vault:today` | Daily task dashboard with scheduled/overdue/active tasks |
+| `/vault:task` | Create/update/link tasks, sub-tasks |
+| `/vault:plan` | Write work plans |
+| `/vault:kanban` | Kanban board view |
+| `/vault:docs` | Generate project documentation (C4 architecture, all 8 sections) |
+| `/vault:enrich` | Orchestrate BA→Designer→SystemAnalyst→Developer→QA enrichment |
+| `/vault:ba` | Business Analyst — user stories, MoSCoW, impact mapping |
+| `/vault:designer` | Designer — state diagrams, WCAG checklist, component states |
+| `/vault:sysanalyst` | System Analyst — ER diagrams, C4 components, NFRs, OpenAPI |
+| `/vault:dev` | Developer — dependency graph, impact analysis, PR template |
+| `/vault:qa` | QA — BDD/Gherkin, coverage matrix, risk-based testing |
+| `/vault:sprint` | Sprint management with DoD/DoR, velocity trends |
+| `/vault:retro` | Sprint retrospective with metrics and structured reflection |
+| `/vault:adr` | Architecture Decision Records (ADR) creation |
+| `/vault:context` | Full project context verification |
+| `/vault:onboard` | Guided project onboarding with auto-docs |
+| `/vault:open` | Open Obsidian vault |
+| `/vault:status` | Show registered projects |
+| `/vault:update` | Update VaultOps to latest version |
+| `/vault:add` | Register current project with VaultOps |
+| `/vault:meeting` | Create, process, or review meeting notes — dispatch action items to projects |
+| `/vault:standup` | Quick daily standup — done, next, blockers — linked to active tasks |
+| `/vault:repo` | Initialize or sync standalone doc repo (no code project needed) |
+
+## Obsidian Vault Structure
+
+```
+08-Execution/
+  Task Board.md          # Summary table
+  Tasks/                 # Individual task files with YAML frontmatter
+    EXE-001.md
+    EXE-001.1.md         # Sub-tasks
+  Role Outputs/          # Per-task role analysis
+    EXE-001/
+      BA.md
+      Designer.md
+      SystemAnalyst.md
+      Developer.md
+      QA.md
+  Sprints/               # Sprint definition files
+    Sprint-1.md
+  Work Plans.md
+  Execution Journal.md
+  Current Stage.md
+  Context State.md
+00-Overview/ through 07-References/   # Documentation sections
+_shared/                  # Cross-project artifacts
+  Cross-Project Links.md
+_meetings/                # Meeting notes (cross-project)
+  Meeting Index.md
+  Notes/                  # Individual meeting notes with MTG-### IDs
+  Series/                 # Recurring meeting definitions
+  Templates/              # Meeting note templates
+```
+
+## Testing
+
+```bash
+# Verify MCP server syntax and tool count
+python3 -c "import sys; sys.path.insert(0,'scripts'); import vaultops_mcp_server as m; print(len(m._tools_list_result()['tools']),'tools')"
+
+# Test CLI
+node scripts/vault_cli.js --help
+node scripts/vault_cli.js init --vault-root /tmp/test-vault
+
+# Test dashboard
+node scripts/vault_cli.js dashboard --once --json
+```
+
+## Key Constraints
+
+- MCP server: Python stdlib only (no pip dependencies)
+- CLI: Node.js stdlib only (no npm dependencies)
+- All data stored in local Obsidian markdown files
+- YAML frontmatter for structured metadata (Obsidian Dataview compatible)
+- Wiki-links ([[EXE-001]]) for task relationships (Obsidian graph view)
+- Mermaid diagrams in markdown (Obsidian renders natively)
+- Zero network calls — works fully offline
+- `vaultops init` is idempotent (safe to run repeatedly)

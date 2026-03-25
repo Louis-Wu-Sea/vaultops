@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [18, 20, 22]
+        python: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Verify MCP server loads
+        run: |
+          python3 -c "
+          import sys; sys.path.insert(0, 'scripts')
+          import vaultops_mcp_server as m
+          tools = m._tools_list_result()['tools']
+          print(f'{len(tools)} tools loaded')
+          assert len(tools) >= 43, f'Expected >=43 tools, got {len(tools)}'
+          "
+
+      - name: Verify CLI runs
+        run: node scripts/vault_cli.js --help
+
+      - name: Check Python syntax
+        run: python3 -m py_compile scripts/vaultops_mcp_server.py
+
+      - name: Check JS syntax
+        run: node --check scripts/vault_cli.js

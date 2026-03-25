@@ -1,0 +1,20 @@
+---
+description: VaultOps run discipline + documentation updates
+globs:
+  - "**/*"
+alwaysApply: true
+---
+Follow this order on every task: BA -> Designer -> Developer -> QA.
+
+On each step, update:
+- 08-Execution/Task Board.md
+- 08-Execution/Work Plans.md
+- 08-Execution/Execution Journal.md
+- 08-Execution/Current Stage.md
+- 08-Execution/Context State.md
+
+Write role outputs to:
+- 08-Execution/Role Outputs/<EXE-ID>/<ROLE>.md
+
+Do not duplicate task rows/sections; reuse existing entries.
+If VaultOps MCP is available, use .vaultops/mint_token.sh and .vaultops/AGENT_RULES.md.

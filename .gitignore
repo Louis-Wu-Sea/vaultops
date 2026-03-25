@@ -1,0 +1,40 @@
+node_modules/
+dist/
+coverage/
+
+.DS_Store
+npm-debug.log*
+
+.env
+.env.*
+!.env.example
+
+# Local state (created by vault add/init)
+state/
+.vercel
+
+# VaultOps local config (may contain secrets)
+.vaultops/
+
+# PyInstaller build artifacts
+build/
+*.spec
+.env*.local
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# VaultOps: machine-local files (contain absolute paths)
+.claude/settings.json
+.mcp.json
+
+# Internal deployment scripts
+scripts/deploy_staging.sh
+
+# Landing page (deployed separately via private repo)
+landing/
+public/
+vercel.json
+scripts/build-landing.sh
