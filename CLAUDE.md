@@ -237,6 +237,17 @@ node scripts/vault_cli.js dashboard --once --json
 npm test
 ```
 
+## Verification (no dev server)
+
+**VaultOps is a CLI/MCP tool — there is no web dev server.** Do NOT run `preview_start` or any browser-based verification. After editing source files, verify with:
+
+```bash
+npx tsc --noEmit   # type check
+npm test           # 58 tests
+```
+
+If `src/` was changed, also rebuild: `npx tsc`
+
 ## Key Constraints
 
 - MCP server + hooks: TypeScript, compiled to JS, Node.js stdlib only (zero runtime npm deps)

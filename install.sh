@@ -206,8 +206,18 @@ else
   echo "To set up a project: cd /path/to/repo && vaultops add"
 fi
 
-echo ""
-echo "✓ VaultOps installed! Open Claude Code in your project and try: /vault:today"
+if [[ -d "${ORIGINAL_PWD}/.git" ]] || [[ -f "${ORIGINAL_PWD}/package.json" ]]; then
+  echo ""
+  echo "  Open Claude Code in this project and type: /vault:today"
+else
+  echo ""
+  echo "  Next — run this in every project you want Claude to remember:"
+  echo ""
+  echo "    cd /path/to/your/repo"
+  echo "    vaultops add"
+  echo ""
+  echo "  Without it, Claude has no memory for that project."
+fi
 
 # Open Obsidian
 VAULTOPS_INSTALL_DIR="$INSTALL_DIR" node "${INSTALL_DIR}/scripts/vault_cli.js" open "$ORIGINAL_PWD" 2>/dev/null || true
