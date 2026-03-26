@@ -1958,17 +1958,7 @@ async function cmdSyncPull(opts) {
       process.exit(1);
     }
     info('Vault exists but has no git history — initializing...');
-    spawnSync('git', ['init'], { cwd: vaultPath, stdio: 'pipe' });
-
-    // Snapshot any existing local files so they are not lost
-    const statusCheck = spawnSync('git', ['status', '--porcelain'], { cwd: vaultPath, stdio: 'pipe' });
-    const hasLocalFiles = statusCheck.stdout && statusCheck.stdout.toString().trim().length > 0;
-    if (hasLocalFiles) {
-      info('Local files detected — preserving them as initial commit before merging remote...');
-      spawnSync('git', ['add', '-A'], { cwd: vaultPath, stdio: 'pipe' });
-      spawnSync('git', ['commit', '-m', 'vault: preserve local files before remote sync'], { cwd: vaultPath, stdio: 'pipe' });
-      ok('Local files committed');
-    }
+    spawnSync('git', ['init', '-b', branch], { cwd: vaultPath, stdio: 'pipe' });
 
     spawnSync('git', ['remote', 'add', 'origin', remoteUrl], { cwd: vaultPath, stdio: 'pipe' });
     info(`Fetching ${branch} from ${remoteUrl}...`);
@@ -1978,23 +1968,34 @@ async function cmdSyncPull(opts) {
       process.exit(1);
     }
 
+    // Check for local files BEFORE touching the working tree
+    const lsResult = spawnSync('git', ['ls-files', '--others', '--exclude-standard'], { cwd: vaultPath, stdio: 'pipe' });
+    const hasLocalFiles = lsResult.stdout && lsResult.stdout.toString().trim().length > 0;
+
     if (hasLocalFiles) {
-      // Merge remote into local commit (preserves both sides, same as sync strategy)
-      spawnSync('git', ['checkout', '-b', branch], { cwd: vaultPath, stdio: 'pipe' });
+      // Commit local files first (with fallback identity in case git config is not set)
+      info('Local files detected — preserving them before merging remote...');
+      spawnSync('git', ['add', '-A'], { cwd: vaultPath, stdio: 'pipe' });
+      spawnSync('git', [
+        '-c', 'user.email=vaultops@local',
+        '-c', 'user.name=VaultOps',
+        'commit', '-m', 'vault: preserve local files before remote sync',
+      ], { cwd: vaultPath, stdio: 'pipe' });
+
+      // Merge remote into our initial commit (unrelated histories is expected)
       const mergeResult = spawnSync(
         'git', ['merge', '--allow-unrelated-histories', '-m', `vault: merge remote ${branch}`, `origin/${branch}`],
         { cwd: vaultPath, stdio: 'inherit' }
       );
       if (mergeResult.status !== 0) {
-        warn('Merge conflicts detected — your local files and remote files have overlapping content.');
+        warn('Merge conflicts detected — your local files and remote files overlap.');
         warn('Resolve conflicts manually, then run: vaultops sync now');
         process.exit(1);
       }
       ok('Local files preserved and merged with remote');
     } else {
-      // No local files — safe to reset to remote state exactly
-      spawnSync('git', ['checkout', '-b', branch], { cwd: vaultPath, stdio: 'pipe' });
-      spawnSync('git', ['reset', '--hard', `origin/${branch}`], { cwd: vaultPath, stdio: 'pipe' });
+      // Empty directory — safe to check out remote branch directly (no commit needed)
+      spawnSync('git', ['checkout', '--track', `origin/${branch}`], { cwd: vaultPath, stdio: 'pipe' });
       ok('Vault initialized from remote');
     }
 
