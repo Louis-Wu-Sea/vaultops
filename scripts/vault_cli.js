@@ -1489,7 +1489,9 @@ function resolveVaultForSync(opts) {
   }
   // 3. Doc repo: vault = project itself
   if (fs.existsSync(path.join(projectPath, '08-Execution'))) return projectPath;
-  return null;
+  // 4. Global vault — always known, even if not yet cloned
+  const globalVault = path.join(os.homedir(), '.vaultops', 'vault');
+  return globalVault;
 }
 
 function readVaultSyncConfig(vaultPath) {
@@ -1906,10 +1908,9 @@ function cmdSyncNow(opts) {
 }
 
 async function cmdSyncPull(opts) {
-  // Allow an explicit --vault path even if it doesn't exist yet (clone scenario)
-  const vaultPath = opts.vault ? path.resolve(opts.vault) : resolveVaultForSync(opts);
+  const vaultPath = resolveVaultForSync(opts);
   if (!vaultPath) {
-    fail('Could not resolve vault path. Use --vault <path> or run from a VaultOps project.');
+    fail('Could not resolve vault path. Run from a VaultOps project or use --vault <path>.');
     process.exit(1);
   }
 
