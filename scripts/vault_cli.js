@@ -1905,6 +1905,101 @@ function cmdSyncNow(opts) {
   }
 }
 
+async function cmdSyncPull(opts) {
+  // Allow an explicit --vault path even if it doesn't exist yet (clone scenario)
+  const vaultPath = opts.vault ? path.resolve(opts.vault) : resolveVaultForSync(opts);
+  if (!vaultPath) {
+    fail('Could not resolve vault path. Use --vault <path> or run from a VaultOps project.');
+    process.exit(1);
+  }
+
+  let cfg = {};
+  try { cfg = readVaultSyncConfig(vaultPath); } catch (_) {}
+  const branch = opts.branch || cfg.VAULTOPS_GIT_BRANCH || 'main';
+  const configuredRemote = opts.remote || cfg.VAULTOPS_GIT_REMOTE || '';
+
+  // Case 1: vault directory doesn't exist at all — clone from remote
+  if (!fs.existsSync(vaultPath)) {
+    const remoteUrl = configuredRemote;
+    if (!remoteUrl) {
+      fail('Vault path does not exist and no remote URL provided.\nUse: vaultops sync pull --vault <path> --remote <url>');
+      process.exit(1);
+    }
+    if (!SAFE_REMOTE_SYNC_RE.test(remoteUrl)) {
+      fail('Invalid remote URL. Only HTTPS and SSH (git@...) are allowed.');
+      process.exit(1);
+    }
+    const parentDir = path.dirname(vaultPath);
+    fs.mkdirSync(parentDir, { recursive: true });
+    info(`Cloning ${color(remoteUrl, 'bold')} → ${vaultPath} ...`);
+    const cloneResult = spawnSync('git', ['clone', '--branch', branch, remoteUrl, vaultPath], {
+      stdio: 'inherit',
+    });
+    if (cloneResult.status !== 0) {
+      fail('git clone failed. Check the remote URL and your SSH/HTTPS credentials.');
+      process.exit(1);
+    }
+    ok(`Vault cloned from ${remoteUrl}`);
+    info(`Branch: ${branch}  |  Path: ${vaultPath}`);
+    return;
+  }
+
+  // Case 2: vault exists but has no git repo — init + add remote + pull
+  const hasGit = fs.existsSync(path.join(vaultPath, '.git'));
+  if (!hasGit) {
+    const remoteUrl = configuredRemote;
+    if (!remoteUrl) {
+      fail('Vault exists but is not a git repository, and no remote URL provided.\nUse: vaultops sync pull --remote <url>');
+      process.exit(1);
+    }
+    if (!SAFE_REMOTE_SYNC_RE.test(remoteUrl)) {
+      fail('Invalid remote URL. Only HTTPS and SSH (git@...) are allowed.');
+      process.exit(1);
+    }
+    info('Vault exists but has no git history — initializing and pulling from remote...');
+    spawnSync('git', ['init'], { cwd: vaultPath, stdio: 'pipe' });
+    spawnSync('git', ['remote', 'add', 'origin', remoteUrl], { cwd: vaultPath, stdio: 'pipe' });
+    info(`Fetching ${branch} from ${remoteUrl}...`);
+    const fetchResult = spawnSync('git', ['fetch', 'origin', branch], { cwd: vaultPath, stdio: 'inherit' });
+    if (fetchResult.status !== 0) {
+      fail('git fetch failed. Check the remote URL and your SSH/HTTPS credentials.');
+      process.exit(1);
+    }
+    // Reset local to exactly match remote (replaces local files)
+    spawnSync('git', ['checkout', '-b', branch], { cwd: vaultPath, stdio: 'pipe' });
+    const resetResult = spawnSync('git', ['reset', '--hard', `origin/${branch}`], { cwd: vaultPath, stdio: 'inherit' });
+    if (resetResult.status !== 0) {
+      fail('Failed to reset to remote state.');
+      process.exit(1);
+    }
+    ok(`Vault initialized from remote: ${remoteUrl} (branch: ${branch})`);
+    return;
+  }
+
+  // Case 3: vault is a git repo — pull (rebase) to bring it up to date with remote
+  info(`Pulling latest changes from remote (branch: ${branch})...`);
+  const pullResult = spawnSync('git', ['pull', '--rebase', 'origin', branch], {
+    cwd: vaultPath,
+    stdio: 'inherit',
+  });
+  if (pullResult.status !== 0) {
+    warn('Pull failed — there may be local changes conflicting with remote.');
+    warn('To force-reset to remote state (DISCARDS local changes), run:');
+    warn(`  git -C ${vaultPath} fetch origin && git -C ${vaultPath} reset --hard origin/${branch}`);
+    process.exit(1);
+  }
+
+  // Report result
+  const logResult = spawnSync('git', ['log', '--oneline', '-5'], { cwd: vaultPath, stdio: 'pipe' });
+  const recentLog = logResult.status === 0 ? logResult.stdout.toString().trim() : '';
+  ok(`Vault is up to date with remote (branch: ${branch})`);
+  if (recentLog) {
+    console.log('');
+    console.log('  Recent commits:');
+    recentLog.split('\n').forEach((line) => console.log(`    ${line}`));
+  }
+}
+
 function cmdSyncStatus(opts) {
   const vaultPath = resolveVaultForSync(opts);
   if (!vaultPath) {
@@ -2098,8 +2193,9 @@ async function cmdSync(opts) {
       }
       return;
     }
+    case 'pull':   await cmdSyncPull(opts); return;
     default:
-      throw new Error(`Unknown sync command: ${subCmd}. Use: setup|now|status|schedule`);
+      throw new Error(`Unknown sync command: ${subCmd}. Use: setup|now|pull|status|schedule`);
   }
 }
 
@@ -2115,7 +2211,7 @@ function printHelp() {
   console.log('  vaultops init [path]        Set up vault structure, MCP, and skills from scratch');
   console.log('  vaultops status [path]      Tell me about registered projects or a specific one');
   console.log('  vaultops open [path]        Explore Obsidian vault for this project');
-  console.log('  vaultops sync               Autonomous git sync — setup, now, status, schedule');
+  console.log('  vaultops sync               Autonomous git sync — setup, now, pull, status, schedule');
   console.log('  vaultops config             Manage per-project config (e.g. enrich role models)');
   console.log('  vaultops dashboard          Aggregate view — interactive multi-project dashboard');
   console.log('  vaultops uninstall [path]   Leave cleanly — remove VaultOps (CLI + artifacts)');

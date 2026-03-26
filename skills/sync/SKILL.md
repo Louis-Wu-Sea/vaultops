@@ -15,6 +15,7 @@ Manage autonomous git synchronization for your Obsidian vault.
 | `/vault:sync` | Show sync status (last sync, pending changes, conflicts) |
 | `/vault:sync setup` | Interactive wizard — connect git remote, choose Personal or Team mode, configure schedule |
 | `/vault:sync now` | Sync immediately (commit + pull --rebase + push) |
+| `/vault:sync pull` | Pull from remote — bring local vault to the state on the git server (initial hydration or update) |
 | `/vault:sync log` | Show recent sync history from Sync Log.md |
 | `/vault:sync schedule install` | Install OS scheduler (launchd on macOS, cron on Linux) |
 | `/vault:sync schedule uninstall` | Remove OS scheduler |
@@ -52,7 +53,10 @@ The wizard will:
 # One-time setup
 vaultops sync setup
 
-# Manual sync
+# Pull from remote (initial hydration or catch up)
+vaultops sync pull
+
+# Manual sync (commit + push)
 vaultops sync now
 
 # Status check
