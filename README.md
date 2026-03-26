@@ -1,129 +1,107 @@
 # VaultOps
 
-**Claude Code plugin for Obsidian-based task management**
+Claude is brilliant. But it forgets everything when you close the tab.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow.svg)](https://buymeacoffee.com/vaultops)
+VaultOps gives Claude a notebook.
+Every task, decision, and doc gets saved to a local Obsidian vault.
+When you open Claude tomorrow — it picks up exactly where you left off.
 
-VaultOps bridges Claude Code and Obsidian — giving your AI assistant persistent project memory. Tasks, sprints, meeting notes, architecture decisions, and role-based analysis are stored as local markdown files with YAML frontmatter, viewable in Obsidian's graph and Dataview.
-
-## Features
-
-- **43 MCP tools** — task CRUD, sprint planning, role enrichment, meeting notes, cross-project search, predictive analytics
-- **27 slash commands** — `/vault:today`, `/vault:task`, `/vault:sprint`, `/vault:enrich`, `/vault:meeting`, and more
-- **TUI dashboard** — multi-project aggregate view in your terminal
-- **Role enrichment pipeline** — BA, Designer, System Analyst, Developer, QA analysis per task
-- **Task-as-Code** — verify contracts in task frontmatter (`file_exists`, `grep_content`, `test_pattern`)
-- **Predictive Brain** — cycle time forecasting and risk assessment from historical patterns
-- **Sprint management** — burndown charts, velocity tracking, DoD/DoR
-- **Meeting notes** — action item dispatch to project task boards, follow-up scheduling
-- **Cross-project intelligence** — search and link tasks across all registered projects
-- **Architecture radar** — coupling detection, hotspot analysis, ADR suggestions
-- **Zero dependencies** — Python stdlib (MCP server), Node.js stdlib (CLI)
-- **Fully offline** — all data in local Obsidian markdown files, no network calls
-
-## Quick Start
+## Three steps, that's it
 
 ```bash
-# Install
+# Step 1 — Install (once, on your machine)
 curl -fsSL https://raw.githubusercontent.com/Louis-Wu-Sea/vaultops/main/install.sh | bash
 
-# Register your project
+# Step 2 — Open a notebook for your project (once per repo)
 cd /path/to/your/repo
 vaultops add
 
-# Open Claude Code and try
+# Step 3 — Open Claude Code and start
 /vault:today
 ```
 
-### Manual Install
+> **Step 2 is the important one.**
+>
+> `vaultops add` connects Claude to your project's notebook.
+> Without it, Claude starts fresh every time — no memory, no tasks, no history.
+> Run it once in every project you want Claude to remember.
 
-```bash
-git clone https://github.com/Louis-Wu-Sea/vaultops.git
-cd vaultops
-./install.sh
-```
+## Two places to type commands
 
-## How It Works
+VaultOps lives in two places. Don't mix them up:
 
-```
-Claude Code  <->  MCP Server (Python)  <->  Obsidian Vault (Markdown + YAML)
-     |                                           |
-  27 Skills                                  Graph View
-  (slash cmds)                               Dataview
-                                             Canvas
-```
+| Where | What to type | What it's for |
+|-------|-------------|---------------|
+| **Your terminal** | `vaultops add` `vaultops open` `vaultops update` | Setup and management |
+| **Claude Code chat** | `/vault:today` `/vault:task` `/vault:docs` | Daily work with Claude |
 
-1. **You work in Claude Code** — use slash commands like `/vault:task` or `/vault:sprint`
-2. **MCP server reads/writes** markdown files with YAML frontmatter in your Obsidian vault
-3. **Obsidian renders** everything — graph view shows task relationships, Dataview queries your data, canvas boards visualize sprints
+**Terminal** = you're talking to VaultOps.
+**Claude Code** = you're talking to Claude, and VaultOps helps behind the scenes.
 
-## Slash Commands
+## What Claude can do once it has a notebook
 
-| Command | Description |
+**Tasks** — Claude tracks what you're working on automatically.
+Just describe work in the chat — Claude creates `EXE-###` tasks and updates them as you go.
+
+**Docs** — Run `/vault:docs` and Claude reads your whole codebase, then writes architecture
+docs, API reference, and a runbook directly into Obsidian.
+
+**Analysis** — Run `/vault:enrich EXE-042` and Claude produces full BA, Designer,
+System Analyst, Developer, and QA analysis for any task.
+
+**Sprints & meetings** — Planning, burndown, retros, meeting notes with action items.
+All in your vault, all linked together.
+
+## The slash commands (use in Claude Code chat)
+
+| Command | What it does |
 |---------|-------------|
-| `/vault:today` | Daily task dashboard — scheduled, overdue, active |
-| `/vault:task` | Create/update tasks with EXE-### IDs |
-| `/vault:plan` | Write work plans |
-| `/vault:kanban` | Kanban board view |
-| `/vault:sprint` | Sprint management with velocity trends |
-| `/vault:enrich` | Full role enrichment: BA -> Designer -> SysAnalyst -> Dev -> QA |
-| `/vault:meeting` | Meeting notes with action item dispatch |
-| `/vault:docs` | Generate project documentation |
-| `/vault:retro` | Sprint retrospective with metrics |
-| `/vault:context` | Full project context verification |
+| `/vault:today` | What am I working on today? |
+| `/vault:task` | Create or update a task |
+| `/vault:docs` | Generate full project documentation |
+| `/vault:enrich` | Deep analysis: BA → Designer → Dev → QA |
+| `/vault:plan` | Write a work plan |
+| `/vault:kanban` | See tasks as a board |
+| `/vault:sprint` | Sprint planning and burndown |
+| `/vault:meeting` | Meeting notes with action items |
+| `/vault:retro` | Sprint retrospective |
+| `/vault:context` | Show everything Claude knows about this project |
 
-See all 27 commands in [CLAUDE.md](CLAUDE.md).
+[All 28 commands →](CLAUDE.md)
 
-## CLI Commands
+## The terminal commands (use in your terminal)
 
 ```bash
-vaultops add [path]       # Register a project
-vaultops init [path]      # Set up vault structure
-vaultops status           # Show registered projects
-vaultops dashboard        # Interactive multi-project TUI
-vaultops open [path]      # Open Obsidian vault
-vaultops update           # Update to latest version
-vaultops config           # Per-project settings
-vaultops uninstall        # Clean removal
+vaultops add        # Open a notebook for this project  ← do this first
+vaultops open       # Open your notebook in Obsidian
+vaultops status     # See all your projects
+vaultops update     # Get the latest version
+vaultops dashboard  # Overview of all projects in terminal
+vaultops uninstall  # Remove VaultOps
 ```
 
-## Vault Structure
+## Where does everything live?
+
+Your notebook is plain markdown files at `~/.vaultops/vault/<project-name>/`.
+Open it in Obsidian to see tasks as a graph, run Dataview queries, and browse docs.
 
 ```
 08-Execution/
-  Task Board.md              # Summary table
-  Tasks/
-    EXE-001.md               # Individual tasks with YAML frontmatter
-    EXE-001.1.md             # Sub-tasks
-  Role Outputs/
-    EXE-001/
-      BA.md / Designer.md / SystemAnalyst.md / Developer.md / QA.md
-  Sprints/
-    Sprint-1.md
-  Work Plans.md
-  Execution Journal.md
-_meetings/
-  Notes/MTG-001.md           # Meeting notes with action items
+  Task Board.md        ← all your tasks in one table
+  Tasks/EXE-001.md     ← each task as its own file
+  Execution Journal.md ← auto-written log of what Claude did
+_meetings/             ← meeting notes and action items
+00-Overview/           ← AI-generated project docs
 ```
 
-## Contributing
+## Tech notes (for contributors)
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
+- Runtime: TypeScript compiled to JS, Node.js stdlib only — zero npm dependencies
+- Data: standard Obsidian markdown with YAML frontmatter
+- Works fully offline — no telemetry, no cloud, no accounts
 
-Key constraints:
-- MCP server: **Python stdlib only** (no pip dependencies)
-- CLI: **Node.js stdlib only** (no npm dependencies)
-- Data: Obsidian-compatible markdown with YAML frontmatter
+[CONTRIBUTING.md](CONTRIBUTING.md) · [MIT License](LICENSE)
 
-## Support
+---
 
-If VaultOps is useful to you, consider supporting development:
-
-- [Buy Me a Coffee](https://buymeacoffee.com/vaultops)
-- Star this repo
-
-## License
-
-[MIT](LICENSE)
+If VaultOps saves you time — [Buy Me a Coffee](https://buymeacoffee.com/vaultops) · Star this repo

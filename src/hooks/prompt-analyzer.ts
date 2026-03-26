@@ -16,7 +16,6 @@ import {
   logLearningEvent,
   predictCycleTime,
   predictPriority,
-  predictRisk,
   type TaskInfo,
 } from "./shared/brain-state.js";
 import { createTask, updateTask, logStep } from "../tools/core.js";
@@ -212,32 +211,7 @@ function main(): void {
         state.original_priority = priority;
         state.intent_match_layer = result.match_layer ?? null;
 
-        outputLines.push(`[VaultOps] Auto-created ${newId}: "${title}" [${priority}, IN_PROGRESS]`);
-        if (predictionHint) outputLines.push(`[Predictive Brain] ${predictionHint}`);
-
-        // Risk-based verify suggestion
-        try {
-          const risk = predictRisk(projectPath, []);
-          if (risk.risk_level === "medium" || risk.risk_level === "high") {
-            outputLines.push(
-              `[Predictive Brain] Risk: ${String(risk.risk_level).toUpperCase()}. ` +
-              `Consider adding verify: checks to ${newId}.`
-            );
-          }
-        } catch { /* ignore */ }
-
-        outputLines.push("Task tracking active. Evidence will be collected automatically.");
-        outputLines.push("");
-        outputLines.push(`VAULTOPS_NEW_TASK: ${newId}`);
-        outputLines.push("INSTRUCTION: A new task was just created. Before responding to the user,");
-        outputLines.push("use AskUserQuestion to offer role enrichment with two options:");
-        outputLines.push(`  Question: "${newId} \u0441\u043e\u0437\u0434\u0430\u043d\u0430. \u0417\u0430\u043f\u0443\u0441\u0442\u0438\u0442\u044c \u0430\u043d\u0430\u043b\u0438\u0437 \u0440\u043e\u043b\u0435\u0439?"`);
-        outputLines.push("  Option 1 \u2014 \u0421\u0435\u0439\u0447\u0430\u0441: BA \u2192 (Designer \u2551 SysAnalyst) \u2192 Developer \u2192 QA");
-        outputLines.push("    Full plan ready: stories, UX, architecture, code plan, tests");
-        outputLines.push("  Option 2 \u2014 \u041f\u043e\u0437\u0436\u0435: continue answering, task is already tracked");
-        outputLines.push(`    /vault:enrich ${newId} \u2014 when ready`);
-        outputLines.push("If user picks Option 1: immediately run /vault:enrich on this task.");
-        outputLines.push("If user picks Option 2: continue normally without enrichment.");
+        outputLines.push(`[VaultOps] ${newId} created. Run /vault:enrich when ready.`);
       }
     } catch { /* Silently fail — don't break user flow */ }
   }

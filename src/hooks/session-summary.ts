@@ -226,146 +226,31 @@ function main(): void {
   const docs = stats.docs;
   const bar = progressBar(d, total);
 
-  // Build rich receipt
-  const lines: string[] = [BRAIN_SEP, "\u2b21  VaultOps Brain  \u00b7  Session Report", BRAIN_SEP, ""];
+  // Build compact receipt (max ~12 lines)
+  const lines: string[] = [BRAIN_SEP];
 
-  // Task lifecycle section
+  // Task outcome line
   if (taskLifecycle) {
-    lines.push("  TASK LIFECYCLE");
     const tid = taskLifecycle.id as string;
     const summary = taskLifecycle.summary as string;
-    lines.push(summary ? `  \u2726  ${tid}: ${summary}` : `  \u2726  ${tid}`);
-    lines.push(`     ${taskLifecycle.status_flow}`);
-    lines.push(`     Evidence: ${taskLifecycle.evidence}`);
+    const label = summary ? `${tid}: ${summary}` : tid;
+    lines.push(`  ${label}`);
+    lines.push(`  ${taskLifecycle.status_flow}  |  ${taskLifecycle.evidence}`);
 
+    // Verify results — always show if ran (critical feedback)
     const vr = taskLifecycle.verify_result as VerifyResult | null;
     if (vr?.results?.length) {
-      lines.push("");
-      lines.push("  VERIFY CONTRACT");
       for (const r of vr.results) {
         const icon = r.passed ? "\u2713" : "\u2717";
-        lines.push(`     ${icon}  ${r.detail}`);
+        lines.push(`  ${icon} ${r.detail}`);
       }
     }
-    lines.push("");
   }
 
-  // Session activity
-  if (entries.length) {
-    lines.push("  SESSION ACTIVITY");
-    lines.push(`  \ud83d\udcd3  ${entries.length} step${entries.length !== 1 ? "s" : ""} captured`);
-    for (const e of entries.slice(0, 8)) {
-      // Strip ANSI escape codes and control characters before display
-      const clean = e.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
-      const label = clean.length > 45 ? clean.slice(0, 45) + "\u2026" : clean;
-      lines.push(`     \u00b7 ${label}`);
-    }
-    if (entries.length > 8) lines.push(`     \u00b7 +${entries.length - 8} more in journal`);
-    lines.push("");
-  }
+  // Progress summary
+  lines.push(`  ${bar} ${d}\u2713 ${a}> ${t}o of ${total}  |  ${docs} docs`);
 
-  // Vault state
-  lines.push(`  ${bar}  ${d}\u2713  ${a}\u25b6  ${t}\u25cb  of ${total}`);
-  lines.push(`  \u25c8  ${docs} docs across vault`);
-  lines.push("");
-
-  // Learning status
-  try {
-    const vaultProject = resolveVaultProject(projectPath);
-    if (vaultProject) {
-      const logPath = path.join(vaultProject, "08-Execution", "Learnings", "Learning Log.md");
-      const profilePath = path.join(vaultProject, "08-Execution", "Learnings", "Project Profile.md");
-      if (fileExists(logPath)) {
-        const logContent = readFileOrNull(logPath) ?? "";
-        const logLines = (logContent.match(/\n## /g) ?? []).length;
-        let profileFm: Record<string, unknown> = {};
-        if (fileExists(profilePath)) {
-          const { frontmatter: pf } = parseFrontmatter(readFileOrNull(profilePath) ?? "");
-          profileFm = pf;
-        }
-        const conf = profileFm.confidence ?? "low";
-        const acc = profileFm.intent_accuracy;
-        const accStr = acc && acc !== "N/A"
-          ? ` \u00b7 intent ${Math.round(Number(acc) * 100)}%`
-          : "";
-        lines.push(`  \ud83e\udde0  Learning: ${logLines} events \u00b7 ${conf} confidence${accStr}`);
-        lines.push("");
-      }
-    }
-  } catch { /* ignore */ }
-
-  // Docs flag
-  const docsTouched = state.docs_touched;
-  if (docsTouched.length) {
-    lines.push(`  \u26a0  DOCS FLAG: ${docsTouched.length} architecture file${docsTouched.length !== 1 ? "s" : ""} changed`);
-    for (const fp of docsTouched.slice(0, 5)) {
-      lines.push(`     \u00b7 ${path.basename(fp)}`);
-    }
-    lines.push("     Run /vault:docs next session to update.");
-    lines.push("");
-  }
-
-  // Auto: Stale docs detection
-  try {
-    const staleResult = getStaleDocs({ project_path: projectPath, hours: 72 });
-    const staleContent = staleResult.content as Array<{ text?: string }>;
-    if (staleContent?.[0]?.text) {
-      const staleData = JSON.parse(staleContent[0].text);
-      const stale = staleData.stale_sections ?? [];
-      if (stale.length) {
-        lines.push(`  \ud83d\udcd6  STALE DOCS (${stale.length} section${stale.length !== 1 ? "s" : ""})`);
-        for (const s of stale.slice(0, 3)) {
-          lines.push(`     \u00b7 ${s.section}: ${String(s.reason ?? "").slice(0, 40)}`);
-        }
-        lines.push("     Run /vault:docs to refresh.");
-        lines.push("");
-      }
-    }
-  } catch { /* ignore */ }
-
-  // Auto: Coupling hint (files from different modules)
-  try {
-    const editedPaths = state.files_edited.map(e => e.path);
-    const modules = new Set<string>();
-    for (const fp of editedPaths) {
-      const parts = fp.split("/");
-      if (parts.length >= 2) {
-        modules.add(parts[0] !== "src" ? parts[0] : (parts.length >= 3 ? parts[1] : parts[0]));
-      }
-    }
-    if (modules.size >= 3) {
-      lines.push(`  \ud83d\udce1  COUPLING: ${modules.size} modules changed in one task`);
-      lines.push(`     Modules: ${[...modules].sort().slice(0, 5).join(", ")}`);
-      lines.push("     Run /vault:radar to analyze coupling patterns.");
-      lines.push("");
-    }
-  } catch { /* ignore */ }
-
-  // Auto: Sprint deadline check
-  try {
-    const sprintsPath = path.join(execDir, SPRINTS_DIR);
-    if (fs.existsSync(sprintsPath) && fs.statSync(sprintsPath).isDirectory()) {
-      for (const fname of fs.readdirSync(sprintsPath)) {
-        if (fname.startsWith("Sprint-") && fname.endsWith(".md") && !fname.includes("Retro")) {
-          const sc = readFileOrNull(path.join(sprintsPath, fname)) ?? "";
-          const { frontmatter: sfm } = parseFrontmatter(sc);
-          const endDate = String(sfm.end_date ?? "");
-          const sprintNum = String(sfm.number ?? fname.replace("Sprint-", "").replace(".md", ""));
-          if (endDate && endDate <= today) {
-            const retroFile = path.join(sprintsPath, `Sprint-${sprintNum}-Retro.md`);
-            if (!fileExists(retroFile)) {
-              lines.push(`  \ud83d\udce2  Sprint ${sprintNum} ended (${endDate}) \u2014 run /vault:retro ${sprintNum}`);
-              lines.push("");
-              break;
-            }
-          }
-        }
-      }
-    }
-  } catch { /* ignore */ }
-
-  // Auto-sync: run if schedule=session
-  let syncLine = "";
+  // Auto-sync if schedule=session
   try {
     const syncCfg = getSyncConfig(projectPath);
     const vaultProject = resolveVaultProject(projectPath);
@@ -378,20 +263,59 @@ function main(): void {
         mode: syncCfg.mode,
         userIdentity,
       });
-      const remoteShort = syncResult.remote
-        ? syncResult.remote.replace(/^https?:\/\//, "").replace(/^git@/, "").replace(/:/, "/").replace(/\.git$/, "")
-        : "remote";
       if (syncResult.error) {
-        syncLine = `  \u26a0  SYNC: ${syncResult.error.slice(0, 60)}`;
+        lines.push(`  [!] Sync: ${syncResult.error.slice(0, 60)}`);
       } else if (syncResult.conflicts) {
-        syncLine = `  \u26a0  SYNC: conflicts \u2014 see 08-Execution/Conflict Report.md`;
+        lines.push("  [!] Sync conflicts — see 08-Execution/Conflict Report.md");
       } else if (!syncResult.skipped) {
-        syncLine = `  \ud83d\udce1  SYNC: pushed to ${remoteShort} (${(syncResult.durationMs / 1000).toFixed(1)}s)`;
+        const remoteShort = (syncResult.remote ?? "remote")
+          .replace(/^https?:\/\//, "").replace(/^git@/, "").replace(/:/, "/").replace(/\.git$/, "");
+        lines.push(`  Synced -> ${remoteShort}`);
       }
     }
   } catch { /* never let sync failure break session end */ }
 
-  if (syncLine) lines.push(syncLine);
+  // Single "Next:" suggestion — highest priority action only
+  const nextActions: string[] = [];
+
+  // 1. Verify failures take top priority
+  const vrTop = taskLifecycle?.verify_result as VerifyResult | null;
+  if (vrTop && !vrTop.all_passed) {
+    nextActions.push(`fix verify failures in ${taskLifecycle!.id as string}`);
+  }
+
+  // 2. Architecture files changed → update docs
+  if (!nextActions.length && state.docs_touched.length) {
+    nextActions.push("/vault:docs  (arch files changed)");
+  }
+
+  // 3. Sprint ended → retro
+  if (!nextActions.length) {
+    try {
+      const sprintsPath = path.join(execDir, SPRINTS_DIR);
+      if (fs.existsSync(sprintsPath) && fs.statSync(sprintsPath).isDirectory()) {
+        for (const fname of fs.readdirSync(sprintsPath)) {
+          if (fname.startsWith("Sprint-") && fname.endsWith(".md") && !fname.includes("Retro")) {
+            const sc = readFileOrNull(path.join(sprintsPath, fname)) ?? "";
+            const { frontmatter: sfm } = parseFrontmatter(sc);
+            const endDate = String(sfm.end_date ?? "");
+            const sprintNum = String(sfm.number ?? fname.replace("Sprint-", "").replace(".md", ""));
+            if (endDate && endDate <= today) {
+              const retroFile = path.join(sprintsPath, `Sprint-${sprintNum}-Retro.md`);
+              if (!fileExists(retroFile)) {
+                nextActions.push(`/vault:retro ${sprintNum}  (sprint ended ${endDate})`);
+                break;
+              }
+            }
+          }
+        }
+      }
+    } catch { /* ignore */ }
+  }
+
+  if (nextActions.length) {
+    lines.push(`  Next: ${nextActions[0]}`);
+  }
 
   lines.push(BRAIN_SEP);
 

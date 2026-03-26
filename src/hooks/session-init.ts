@@ -9,9 +9,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { isVaultopsProject, getDefaultState, saveState } from "./shared/brain-state.js";
 import { getContext } from "../tools/core.js";
-import { getReplay } from "../tools/ecosystem.js";
-import { execPath } from "../vault/resolve.js";
-import { resolveVaultProject } from "../vault/resolve.js";
+import { execPath, resolveVaultProject } from "../vault/resolve.js";
 import { readFileOrNull, fileExists } from "../fs/read.js";
 import { parseFrontmatter } from "../fs/frontmatter.js";
 import { SPRINTS_DIR } from "../constants.js";
@@ -39,80 +37,44 @@ function main(): void {
   const activeTasks = (data.active_tasks ?? []) as Array<Record<string, string>>;
   const taskSummary = (data.task_summary ?? {}) as Record<string, number>;
 
-  const lines: string[] = ["[VaultOps Brain \u2014 Active]"];
+  const lines: string[] = [];
 
+  // Active task — primary context
   if (activeTasks.length) {
     const focus = activeTasks[0];
     state.active_task_id = focus.id;
     state.phase = "working";
-    lines.push(`Resuming ${focus.id}: ${focus.task} [${focus.priority ?? ""}]`);
-    if (activeTasks.length > 1) lines.push(`(${activeTasks.length} tasks in progress)`);
-  } else {
-    lines.push("No active task \u2014 will auto-create on first work intent.");
+    const extra = activeTasks.length > 1 ? ` (+${activeTasks.length - 1} more)` : "";
+    lines.push(`[VaultOps] ${focus.id}: ${focus.task}${extra}`);
   }
-
-  const blocked = (data.blocked_tasks ?? []) as unknown[];
-  if (blocked.length) lines.push(`\u26a0\ufe0f ${blocked.length} blocked task(s)`);
 
   const total = taskSummary.total ?? 0;
   const done = taskSummary.done ?? 0;
-  if (total) lines.push(`Vault: ${done}/${total} tasks done`);
 
-  // Surface learning insight if available
-  try {
-    const vaultProject = resolveVaultProject(projectPath);
-    if (vaultProject) {
-      const patternsPath = path.join(vaultProject, "08-Execution", "Learnings", "Patterns.md");
-      if (fileExists(patternsPath)) {
-        const { frontmatter: pfm } = parseFrontmatter(readFileOrNull(patternsPath) ?? "");
-        const conf = pfm.confidence ?? "low";
-        const analyzed = pfm.total_tasks_analyzed;
-        if ((conf === "medium" || conf === "high") && analyzed) {
-          lines.push(`Learning: ${conf} confidence (${analyzed} tasks analyzed)`);
-        }
-      }
-    }
-  } catch { /* ignore */ }
+  // Urgent items only (blocked tasks, sprint deadline ≤ 3 days, sync conflicts)
+  const urgentParts: string[] = [];
 
-  // Auto-Replay: compact digest of recent activity
-  try {
-    const replay = getReplay({ project_path: projectPath, hours: 24 });
-    const content = replay.content as Array<{ text?: string }>;
-    if (content?.[0]?.text) {
-      for (const segment of content[0].text.split("\n\n")) {
-        const s = segment.trim();
-        if (s.startsWith("{")) {
-          try {
-            const rd = JSON.parse(s) as Record<string, number>;
-            const parts: string[] = [];
-            if (rd.tasks_completed) parts.push(`${rd.tasks_completed} task(s) completed`);
-            if (rd.tasks_created) parts.push(`${rd.tasks_created} created`);
-            if (rd.stale_docs) parts.push(`${rd.stale_docs} stale doc(s)`);
-            if (parts.length) lines.push(`Last 24h: ${parts.join(", ")}`);
-            break;
-          } catch { continue; }
-        }
-      }
-    }
-  } catch { /* ignore */ }
+  const blocked = (data.blocked_tasks ?? []) as unknown[];
+  if (blocked.length) urgentParts.push(`${blocked.length} blocked`);
 
-  // Sprint deadline check
+  // Sprint deadline — only if within 3 days
   try {
     const [execDir, err] = execPath(projectPath);
     if (!err && execDir) {
       const sprintsPath = path.join(execDir, SPRINTS_DIR);
       if (fs.existsSync(sprintsPath) && fs.statSync(sprintsPath).isDirectory()) {
         const today = new Date().toISOString().slice(0, 10);
+        const threeDays = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
         for (const fname of fs.readdirSync(sprintsPath)) {
           if (fname.startsWith("Sprint-") && fname.endsWith(".md") && !fname.includes("Retro")) {
             const sc = readFileOrNull(path.join(sprintsPath, fname)) ?? "";
             const { frontmatter: sfm } = parseFrontmatter(sc);
             const endDate = String(sfm.end_date ?? "");
             const sprintNum = String(sfm.number ?? fname.replace("Sprint-", "").replace(".md", ""));
-            if (endDate && endDate <= today) {
-              const retroFile = path.join(sprintsPath, `Sprint-${sprintNum}-Retro.md`);
+            if (endDate && endDate <= threeDays) {
+              const retroFile = path.join(execDir, SPRINTS_DIR, `Sprint-${sprintNum}-Retro.md`);
               if (!fileExists(retroFile)) {
-                lines.push(`\ud83d\udce2 Sprint ${sprintNum} ended (${endDate}) \u2014 run /vault:retro ${sprintNum}`);
+                urgentParts.push(`Sprint ${sprintNum} ends ${endDate}`);
               }
             }
           }
@@ -121,24 +83,29 @@ function main(): void {
     }
   } catch { /* ignore */ }
 
-  // Git sync status
+  // Sync conflicts only (not routine sync status)
   try {
     const syncCfg = getSyncConfig(projectPath);
     const vaultProject = resolveVaultProject(projectPath);
     if (syncCfg.enabled && vaultProject && hasGitRepo(vaultProject)) {
       const status = getLastSyncStatus(projectPath, vaultProject);
       if (status.hasConflicts) {
-        lines.push(`\u26a0\ufe0f Sync: conflicts unresolved \u2014 see 08-Execution/Conflict Report.md`);
-      } else if (status.lastSyncAt) {
-        lines.push(`\ud83d\udce1 Last sync: ${status.lastSyncAt} (${status.lastStatus ?? "ok"})`);
-      }
-      if (status.pendingChanges > 0) {
-        lines.push(`${status.pendingChanges} vault file(s) pending sync \u2014 /vault:sync to push`);
+        urgentParts.push("sync conflicts — see Conflict Report.md");
       }
     }
-  } catch { /* ignore sync status errors */ }
+  } catch { /* ignore */ }
 
-  lines.push('Auto-tracking: tasks, journal, docs. Say "don\'t track" to suppress.');
+  if (urgentParts.length) {
+    lines.push(`[!] ${urgentParts.join(" · ")}`);
+  }
+
+  if (!activeTasks.length) {
+    if (total) {
+      lines.push(`[VaultOps] ${done}/${total} tasks done. Auto-tracking active.`);
+    } else {
+      lines.push("[VaultOps] Auto-tracking active.");
+    }
+  }
 
   saveState(projectPath, state);
 

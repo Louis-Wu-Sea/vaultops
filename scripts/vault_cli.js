@@ -291,17 +291,25 @@ function cmdInstall(opts) {
   const launcher = ensureLauncher();
   ensureDir(stateDir);
 
-  console.log(`  ${color('✓', 'green')}  CLI installed ${color('→', 'dim')} ${localBinLink}`);
+  console.log(`  ${color('✓', 'green')}  VaultOps installed ${color('→', 'dim')} ${localBinLink}`);
   if (!pathContains(localBinDir)) {
     warn(`${localBinDir} is not in PATH.`);
     console.log(`  Add to shell profile: export PATH="${localBinDir}:$PATH"`);
   }
   console.log('');
+  console.log(`  Claude is brilliant — but it forgets everything when you close the tab.`);
+  console.log(`  VaultOps gives Claude a ${color('notebook', 'bold')} for your project.`);
+  console.log('');
+  console.log(`  Now open a notebook for your project:`);
+  console.log('');
 
   box([
-    `  ${color('cd /path/to/repo', 'bold')}`,
+    `  ${color('cd /path/to/your/repo', 'bold')}`,
     `  ${color('vaultops add', 'bold')}`,
-  ], 'Next · Register project');
+  ], 'Next — do this now');
+  console.log('');
+  console.log(`  ${color('Do this in every project you want Claude to remember.', 'dim')}`);
+  console.log(`  ${color('Without it, Claude starts fresh every time — no memory at all.', 'dim')}`);
   console.log('');
 
   cmdOpen({ _: [] });
@@ -775,13 +783,15 @@ function cmdInit(opts) {
   const vaultopsSection = `<!-- vaultops-onboarding -->
 ## VaultOps
 
+Quick start: \`/vault:today\` → see tasks · \`/vault:task\` → create/update task · \`/vault:docs\` → generate docs
+
 - Vault root: ${vaultRoot}
 - Project: ${repoId}
 - MCP: vaultops (stdio, local)
-- Skills: /vault:today /vault:plan /vault:task /vault:kanban /vault:docs /vault:enrich /vault:ba /vault:designer /vault:sysanalyst /vault:dev /vault:qa /vault:sprint /vault:context
 - Task tracking: ${vaultProject}/08-Execution/
+- Skills (28): /vault:today /vault:task /vault:plan /vault:kanban /vault:context /vault:docs /vault:enrich /vault:ba /vault:designer /vault:sysanalyst /vault:dev /vault:qa /vault:sprint /vault:retro /vault:radar /vault:standup /vault:meeting /vault:adr /vault:predict /vault:report /vault:replay /vault:learn /vault:onboard /vault:open /vault:add /vault:status /vault:repo /vault:update
 
-Use mcp__vaultops__* tools for all vault operations (get_context, create_task, update_task, log_step, etc.). Do NOT use mcp__obsidian__* tools for VaultOps workflow — they point to a different vault with no access to VaultOps data. Skills are available as /slash-commands in Claude Code.
+Use mcp__vaultops__* tools (NOT mcp__obsidian__* — different vault, no access). Core tools: get_today, get_context, create_task, update_task, log_step, write_plan.
 <!-- /vaultops-onboarding -->`;
 
   if (fs.existsSync(agentsPath)) {
@@ -814,27 +824,37 @@ Use mcp__vaultops__* tools for all vault operations (get_context, create_task, u
   console.log('');
   console.log('');
   box([
-    `${color('✓', 'green')}  VaultOps ready  ·  ${color(repoId, 'bold')}`,
-    `   Vault    ${vaultProject}`,
-    `   Skills   18 commands active in Claude Code`,
+    `${color('✓', 'green')}  Claude now has a notebook for  ${color(repoId, 'bold')}`,
+    `   Saved at  ${vaultProject}`,
   ]);
   console.log('');
-  console.log(`  ${color('→', 'dim')} Start here — generate project docs:`);
+  console.log(`  Everything Claude learns about this project goes in there.`);
+  console.log(`  Tasks, decisions, docs, history — all saved between sessions.`);
+  console.log('');
+
+  // — In Claude Code —
+  console.log(`  ${color('─── Open Claude Code and type these in the chat ──', 'dim')}`);
+  console.log('');
+  console.log(`  ${color('First time?', 'bold')} Let Claude read your whole codebase:`);
   cmdBox('/vault:docs');
-  console.log(`    AI scans your code ${color('→', 'dim')} writes architecture,`);
-  console.log(`    API docs, runbook, codebase map to Obsidian.`);
+  console.log(`  It writes architecture docs, API reference, and a`);
+  console.log(`  runbook straight into your notebook.`);
   console.log('');
-  console.log(`  ${color('─── All skills ────────────────────────────────', 'dim')}`);
-  console.log(`   ${color('/vault:docs', 'bold')}      Generate full project documentation  ${color('← start', 'dim')}`);
-  console.log(`   ${color('/vault:today', 'bold')}     Daily task dashboard`);
-  console.log(`   ${color('/vault:task', 'bold')}      Create, update, link tasks`);
-  console.log(`   ${color('/vault:plan', 'bold')}      Write a work plan`);
-  console.log(`   ${color('/vault:kanban', 'bold')}    Visual task board`);
-  console.log(`   ${color('/vault:sprint', 'bold')}    Sprint planning & burndown`);
-  console.log(`   ${color('/vault:enrich', 'bold')}    BA → Designer → Dev → QA analysis`);
-  console.log(`   ${color('/vault:context', 'bold')}   Full project context check`);
+  console.log(`  ${color('Any time:', 'bold')} see what you\'re working on:`);
+  cmdBox('/vault:today');
   console.log('');
-  console.log(`   ${color('vaultops open', 'bold')}    Open Obsidian vault`);
+  console.log(`  ${color('Or just talk to Claude.', 'bold')} Describe what you\'re building`);
+  console.log(`  and it creates ${color('EXE-### tasks', 'bold')} and tracks them automatically.`);
+  console.log('');
+
+  // — In terminal —
+  console.log(`  ${color('─── These go in your terminal, not in Claude ──────', 'dim')}`);
+  console.log('');
+  console.log(`   ${color('vaultops open', 'bold')}     Open your notebook in Obsidian`);
+  console.log(`   ${color('vaultops status', 'bold')}   See all your projects`);
+  console.log(`   ${color('vaultops update', 'bold')}   Get the latest version`);
+  console.log('');
+  console.log(`  ${color('See all 28 Claude Code commands:', 'dim')} /vault:context`);
   console.log('');
 }
 
@@ -1291,36 +1311,32 @@ function cmdOpen(opts) {
   );
 
   const vaultRoot = DEFAULT_VAULT_ROOT;
-  // Always open the top-level vault directory to avoid "Vault not found" errors
-  // when Obsidian hasn't registered the vault yet or when a specific file is missing
-  const uri = `obsidian://open?path=${encodeURIComponent(vaultRoot)}`;
 
   info(`Opening Obsidian vault: ${vaultRoot}`);
 
   const { execFile } = require('child_process');
 
-  const openUri = (cb) => {
-    if (process.platform === 'darwin') {
-      execFile('open', [uri], cb);
-    } else if (process.platform === 'win32') {
-      execFile('cmd', ['/c', 'start', '', uri], cb);
-    } else {
-      execFile('xdg-open', [uri], cb);
-    }
-  };
-
-  openUri((err) => {
-    if (err) {
-      info('Could not open via Obsidian URI — opening vault folder instead...');
-      const folderOpener =
-        process.platform === 'darwin' ? 'open' :
-        process.platform === 'win32'  ? 'explorer' :
-        'xdg-open';
-      execFile(folderOpener, [vaultRoot], () => {});
-    } else {
-      ok('Obsidian opened.');
-    }
-  });
+  if (process.platform === 'darwin') {
+    // Pass folder directly to Obsidian via -a flag.
+    // This works even when the vault hasn't been registered yet — Obsidian
+    // will prompt the user to open/add the folder as a vault.
+    // (obsidian://open?path= only works for already-registered vaults and
+    //  silently shows "Vault not found" if the vault is new — macOS returns
+    //  exit 0 so the error callback never fires.)
+    execFile('open', ['-a', 'Obsidian', vaultRoot], (err) => {
+      if (err) {
+        // Obsidian not installed — open in Finder so user can add the vault manually
+        execFile('open', [vaultRoot], () => {});
+        info('Obsidian not found — opened vault folder in Finder');
+      } else {
+        ok('Obsidian opened.');
+      }
+    });
+  } else if (process.platform === 'win32') {
+    execFile('cmd', ['/c', 'start', '', `obsidian://open?path=${encodeURIComponent(vaultRoot)}`], () => {});
+  } else {
+    execFile('xdg-open', [`obsidian://open?path=${encodeURIComponent(vaultRoot)}`], () => {});
+  }
 }
 
 // ── vault dashboard ──────────────────────────────────────────────────────
