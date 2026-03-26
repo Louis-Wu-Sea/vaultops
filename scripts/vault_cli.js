@@ -1956,8 +1956,19 @@ async function cmdSyncPull(opts) {
       fail('Invalid remote URL. Only HTTPS and SSH (git@...) are allowed.');
       process.exit(1);
     }
-    info('Vault exists but has no git history — initializing and pulling from remote...');
+    info('Vault exists but has no git history — initializing...');
     spawnSync('git', ['init'], { cwd: vaultPath, stdio: 'pipe' });
+
+    // Snapshot any existing local files so they are not lost
+    const statusCheck = spawnSync('git', ['status', '--porcelain'], { cwd: vaultPath, stdio: 'pipe' });
+    const hasLocalFiles = statusCheck.stdout && statusCheck.stdout.toString().trim().length > 0;
+    if (hasLocalFiles) {
+      info('Local files detected — preserving them as initial commit before merging remote...');
+      spawnSync('git', ['add', '-A'], { cwd: vaultPath, stdio: 'pipe' });
+      spawnSync('git', ['commit', '-m', 'vault: preserve local files before remote sync'], { cwd: vaultPath, stdio: 'pipe' });
+      ok('Local files committed');
+    }
+
     spawnSync('git', ['remote', 'add', 'origin', remoteUrl], { cwd: vaultPath, stdio: 'pipe' });
     info(`Fetching ${branch} from ${remoteUrl}...`);
     const fetchResult = spawnSync('git', ['fetch', 'origin', branch], { cwd: vaultPath, stdio: 'inherit' });
@@ -1965,14 +1976,28 @@ async function cmdSyncPull(opts) {
       fail('git fetch failed. Check the remote URL and your SSH/HTTPS credentials.');
       process.exit(1);
     }
-    // Reset local to exactly match remote (replaces local files)
-    spawnSync('git', ['checkout', '-b', branch], { cwd: vaultPath, stdio: 'pipe' });
-    const resetResult = spawnSync('git', ['reset', '--hard', `origin/${branch}`], { cwd: vaultPath, stdio: 'inherit' });
-    if (resetResult.status !== 0) {
-      fail('Failed to reset to remote state.');
-      process.exit(1);
+
+    if (hasLocalFiles) {
+      // Merge remote into local commit (preserves both sides, same as sync strategy)
+      spawnSync('git', ['checkout', '-b', branch], { cwd: vaultPath, stdio: 'pipe' });
+      const mergeResult = spawnSync(
+        'git', ['merge', '--allow-unrelated-histories', '-m', `vault: merge remote ${branch}`, `origin/${branch}`],
+        { cwd: vaultPath, stdio: 'inherit' }
+      );
+      if (mergeResult.status !== 0) {
+        warn('Merge conflicts detected — your local files and remote files have overlapping content.');
+        warn('Resolve conflicts manually, then run: vaultops sync now');
+        process.exit(1);
+      }
+      ok('Local files preserved and merged with remote');
+    } else {
+      // No local files — safe to reset to remote state exactly
+      spawnSync('git', ['checkout', '-b', branch], { cwd: vaultPath, stdio: 'pipe' });
+      spawnSync('git', ['reset', '--hard', `origin/${branch}`], { cwd: vaultPath, stdio: 'pipe' });
+      ok('Vault initialized from remote');
     }
-    ok(`Vault initialized from remote: ${remoteUrl} (branch: ${branch})`);
+
+    ok(`Remote: ${remoteUrl}  |  Branch: ${branch}  |  Path: ${vaultPath}`);
     return;
   }
 
