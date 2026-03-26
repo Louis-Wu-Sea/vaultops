@@ -1,6 +1,6 @@
 {
   "name": "vaultops",
-  "version": "1.0.1-rc.8",
+  "version": "1.0.1-rc.9",
   "description": "Claude Code plugin for Obsidian-based task management — 43 MCP tools, 27 slash commands, TUI dashboard",
   "license": "MIT",
   "repository": {
