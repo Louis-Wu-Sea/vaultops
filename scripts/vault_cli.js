@@ -873,6 +873,16 @@ const DIST_URL = process.env.VAULTOPS_DIST_URL || 'https://github.com/Louis-Wu-S
 function cmdUpdate(_opts) {
   info('Checking for updates...');
 
+  // Read current installed version before downloading anything
+  let versionBefore = '';
+  try {
+    const pkgPath = path.join(installDir, 'package.json');
+    if (fs.existsSync(pkgPath)) {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+      versionBefore = pkg.version || '';
+    }
+  } catch {}
+
   // Step 1: Download tarball and checksum to temp files, verify before extracting
   const tmpTar = path.join(os.tmpdir(), `vaultops-update-${Date.now()}.tar.gz`);
   const tmpSum = `${tmpTar}.sha256`;
@@ -1084,7 +1094,23 @@ function cmdUpdate(_opts) {
   }
   if (vaultRootFixed > 0) ok(`Migrated ${vaultRootFixed} project(s): vaultRoot path corrected`);
 
-  ok('VaultOps is up to date!');
+  // Read new version after extraction
+  let versionAfter = '';
+  try {
+    const pkgPath = path.join(installDir, 'package.json');
+    if (fs.existsSync(pkgPath)) {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+      versionAfter = pkg.version || '';
+    }
+  } catch {}
+
+  if (versionBefore && versionAfter && versionBefore !== versionAfter) {
+    ok(`Updated: ${color(versionBefore, 'bold')} → ${color(versionAfter, 'bold')}`);
+  } else if (versionAfter) {
+    ok(`VaultOps is up to date — version ${color(versionAfter, 'bold')}`);
+  } else {
+    ok('VaultOps is up to date!');
+  }
   info('Vault content, project registry, and settings are unchanged.');
 }
 
