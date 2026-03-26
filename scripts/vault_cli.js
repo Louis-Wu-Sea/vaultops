@@ -1509,8 +1509,11 @@ function resolveVaultForSync(opts) {
   if (cfg.VAULTOPS_PROJECT_VAULT_ROOT) {
     const repoId = path.basename(projectPath);
     const vaultRoot = path.resolve(cfg.VAULTOPS_PROJECT_VAULT_ROOT);
-    // If vault root ends with repoId (doc repo), return as-is
+    // If vault root ends with repoId (doc repo already at right level), return as-is
     if (path.basename(vaultRoot) === repoId) return vaultRoot;
+    // If vault root itself is already a git repo (global vault synced at root level),
+    // use it directly — don't append repoId to avoid nesting
+    if (fs.existsSync(path.join(vaultRoot, '.git'))) return vaultRoot;
     return path.join(vaultRoot, repoId);
   }
   // 3. Doc repo: vault = project itself
