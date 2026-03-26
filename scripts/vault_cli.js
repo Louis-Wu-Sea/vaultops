@@ -1646,7 +1646,7 @@ async function cmdSyncSetup(opts) {
       }
       branch = opts.branch;
       info(`Branch: ${color(branch, 'bold')} (from --branch flag)`);
-    } else {
+    } else if (!nonInteractive) {
       const branchInput = await prompt(`Branch [default: ${branch}]:`);
       if (branchInput) {
         if (!SAFE_BRANCH_SYNC_RE.test(branchInput)) {
@@ -1655,6 +1655,8 @@ async function cmdSyncSetup(opts) {
         }
         branch = branchInput;
       }
+    } else {
+      info(`Branch: ${color(branch, 'bold')} (auto-detected)`);
     }
 
     // 5. Conflict strategy (auto for personal, notify for team)
