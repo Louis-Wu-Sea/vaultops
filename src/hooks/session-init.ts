@@ -15,6 +15,7 @@ import { resolveVaultProject } from "../vault/resolve.js";
 import { readFileOrNull, fileExists } from "../fs/read.js";
 import { parseFrontmatter } from "../fs/frontmatter.js";
 import { SPRINTS_DIR } from "../constants.js";
+import { getSyncConfig, getLastSyncStatus, hasGitRepo } from "../sync.js";
 
 function main(): void {
   const projectPath = process.cwd();
@@ -119,6 +120,23 @@ function main(): void {
       }
     }
   } catch { /* ignore */ }
+
+  // Git sync status
+  try {
+    const syncCfg = getSyncConfig(projectPath);
+    const vaultProject = resolveVaultProject(projectPath);
+    if (syncCfg.enabled && vaultProject && hasGitRepo(vaultProject)) {
+      const status = getLastSyncStatus(projectPath, vaultProject);
+      if (status.hasConflicts) {
+        lines.push(`\u26a0\ufe0f Sync: conflicts unresolved \u2014 see 08-Execution/Conflict Report.md`);
+      } else if (status.lastSyncAt) {
+        lines.push(`\ud83d\udce1 Last sync: ${status.lastSyncAt} (${status.lastStatus ?? "ok"})`);
+      }
+      if (status.pendingChanges > 0) {
+        lines.push(`${status.pendingChanges} vault file(s) pending sync \u2014 /vault:sync to push`);
+      }
+    }
+  } catch { /* ignore sync status errors */ }
 
   lines.push('Auto-tracking: tasks, journal, docs. Say "don\'t track" to suppress.');
 

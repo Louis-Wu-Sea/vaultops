@@ -11,6 +11,7 @@ import { parseTaskBoard, normalizeStatus } from "../fs/markdown-table.js";
 import { parseFrontmatter } from "../fs/frontmatter.js";
 import { execPath, resolveVaultProject } from "../vault/resolve.js";
 import { TASK_BOARD, EXEC_JOURNAL, TASKS_DIR, RECEIPT_SEP } from "../constants.js";
+import { getSyncConfig, getLastSyncStatus, hasGitRepo } from "../sync.js";
 import { toolResult, receiptResult } from "./helpers.js";
 import { getVelocity } from "./metrics.js";
 
@@ -461,4 +462,52 @@ td{padding:10px 12px;border-top:1px solid #f1f5f9;font-size:14px}
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// ── get_sync_status ───────────────────────────────────────────────────────
+
+export function getSyncStatusTool(args: ToolArgs): ToolResult {
+  const projectPath = String(args.project_path ?? "");
+
+  if (!projectPath) {
+    return toolResult({ error: "project_path is required" }, true);
+  }
+
+  const vaultProject = resolveVaultProject(projectPath);
+  const syncCfg = getSyncConfig(projectPath);
+
+  if (!syncCfg.enabled) {
+    return toolResult({
+      enabled: false,
+      message: "Git sync not configured. Run: vaultops sync setup",
+    });
+  }
+
+  if (!vaultProject) {
+    return toolResult({ error: "Could not resolve vault path" }, true);
+  }
+
+  if (!hasGitRepo(vaultProject)) {
+    return toolResult({
+      enabled: true,
+      error: "No git repository found in vault. Run: vaultops sync setup",
+    });
+  }
+
+  const status = getLastSyncStatus(projectPath, vaultProject);
+  return toolResult({
+    enabled: status.enabled,
+    mode: status.mode,
+    schedule: status.schedule,
+    remote: status.remote,
+    last_sync_at: status.lastSyncAt ?? null,
+    last_status: status.lastStatus ?? null,
+    pending_changes: status.pendingChanges,
+    has_conflicts: status.hasConflicts,
+    vault_path: vaultProject,
+    conflict_report: status.hasConflicts
+      ? `${vaultProject}/08-Execution/Conflict Report.md`
+      : null,
+    sync_log: `${vaultProject}/08-Execution/Sync Log.md`,
+  });
 }

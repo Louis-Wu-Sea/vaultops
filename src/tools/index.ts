@@ -21,7 +21,7 @@ import { learnFromHistory, getInsights, adaptPriority, getLearningStatus } from 
 import { runVerify } from "./verify.js";
 import { getPredictions } from "./predictive.js";
 import { getProjectDna } from "./adaptive.js";
-import { getReplay, getStaleDocs, getArchRadar, generateReport } from "./ecosystem.js";
+import { getReplay, getStaleDocs, getArchRadar, generateReport, getSyncStatusTool } from "./ecosystem.js";
 import { createMeeting, getMeeting, dispatchActionItems, linkDecisionToAdr, createFollowup, getMeetingDashboard, getMeetingSeries } from "./meetings.js";
 
 // ── Handler dispatch map ─────────────────────────────────────────────────
@@ -63,6 +63,7 @@ const handlers: Record<string, ToolHandler> = {
   get_stale_docs: getStaleDocs,
   get_arch_radar: getArchRadar,
   generate_report: generateReport,
+  get_sync_status: getSyncStatusTool,
   create_meeting: createMeeting,
   get_meeting: getMeeting,
   dispatch_action_items: dispatchActionItems,
@@ -528,6 +529,13 @@ const toolDefinitions: ToolDefinition[] = [
       },
       required: ["project_path"],
     },
+  },
+
+  // ── Git Sync (1) ────────────────────────────────────────────
+  {
+    name: "get_sync_status",
+    description: "Get autonomous git sync status for the vault — last sync time, pending changes, conflicts, schedule, and mode. Run 'vaultops sync setup' to enable.",
+    inputSchema: { type: "object", properties: { project_path: pp }, required: ["project_path"] },
   },
 
   // ── Meeting Notes (7) ───────────────────────────────────────

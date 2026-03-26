@@ -671,6 +671,16 @@ function cmdInit(opts) {
       fs.copyFileSync(srcSkill, path.join(destDir, 'SKILL.md'));
     }
     ok(`Installed ${skillDirs.length} skills to ~/.claude/skills/ (global)`);
+    // Remove stale old-named skill dirs (pre-rename migration: skills had no vault- prefix)
+    const legacySkillNames = [
+      'today', 'task', 'plan', 'kanban', 'docs', 'enrich', 'ba',
+      'designer', 'sysanalyst', 'dev', 'qa', 'sprint', 'context', 'onboard',
+      'add', 'adr', 'learn', 'meeting', 'open', 'predict', 'radar', 'replay',
+      'repo', 'report', 'retro', 'standup', 'status', 'update',
+    ];
+    for (const old of legacySkillNames) {
+      rmrf(path.join(skillsTarget, old));
+    }
   } else {
     warn(`Skills source not found: ${skillsSource}`);
   }
@@ -920,6 +930,16 @@ function cmdUpdate(_opts) {
       skillCount += 1;
     }
     ok(`Updated ${skillCount} skills → ~/.claude/skills/`);
+    // Remove stale old-named skill dirs (pre-rename migration: skills had no vault- prefix)
+    const legacySkillNames = [
+      'today', 'task', 'plan', 'kanban', 'docs', 'enrich', 'ba',
+      'designer', 'sysanalyst', 'dev', 'qa', 'sprint', 'context', 'onboard',
+      'add', 'adr', 'learn', 'meeting', 'open', 'predict', 'radar', 'replay',
+      'repo', 'report', 'retro', 'standup', 'status', 'update',
+    ];
+    for (const old of legacySkillNames) {
+      rmrf(path.join(skillsTarget, old));
+    }
   }
 
   // Step 3: Migrate launcher from 'vault' → 'vaultops' and refresh symlink
@@ -1220,8 +1240,19 @@ function cmdUninstall(opts) {
 
     // Remove global skills from ~/.claude/skills/
     const globalSkillsDir = path.join(os.homedir(), '.claude', 'skills');
-    const vaultopsSkills = ['today', 'task', 'plan', 'kanban', 'docs', 'enrich', 'ba',
-      'designer', 'sysanalyst', 'dev', 'qa', 'sprint', 'context', 'onboard'];
+    const vaultopsSkills = [
+      'vault-add', 'vault-adr', 'vault-ba', 'vault-context', 'vault-designer',
+      'vault-dev', 'vault-docs', 'vault-enrich', 'vault-kanban', 'vault-learn',
+      'vault-meeting', 'vault-onboard', 'vault-open', 'vault-plan', 'vault-predict',
+      'vault-qa', 'vault-radar', 'vault-replay', 'vault-repo', 'vault-report',
+      'vault-retro', 'vault-sprint', 'vault-standup', 'vault-status', 'vault-sysanalyst',
+      'vault-task', 'vault-today', 'vault-update',
+      // Legacy names (pre-rename migration)
+      'today', 'task', 'plan', 'kanban', 'docs', 'enrich', 'ba',
+      'designer', 'sysanalyst', 'dev', 'qa', 'sprint', 'context', 'onboard',
+      'add', 'adr', 'learn', 'meeting', 'open', 'predict', 'radar', 'replay',
+      'repo', 'report', 'retro', 'standup', 'status', 'update',
+    ];
     for (const skill of vaultopsSkills) {
       const skillPath = path.join(globalSkillsDir, skill);
       if (rmrf(skillPath)) removed.push(skillPath);
@@ -1431,6 +1462,616 @@ function cmdConfigReset(opts) {
 }
 
 
+// ── vault sync ───────────────────────────────────────────────────────────
+
+const SAFE_REMOTE_SYNC_RE = /^(https?:\/\/[^\s;`|&]+|git@[a-zA-Z0-9._-]+:[^\s;`|&]+|ssh:\/\/[^\s;`|&]+)$/;
+const SAFE_BRANCH_SYNC_RE = /^[a-zA-Z0-9._/-]+$/;
+
+function resolveVaultForSync(opts) {
+  // 1. --vault flag takes precedence
+  if (opts.vault) return path.resolve(opts.vault);
+  // 2. Current project's config.env
+  const projectPath = process.cwd();
+  const configPath = path.join(projectPath, '.vaultops', 'config.env');
+  const cfg = parseEnvFile(configPath);
+  if (cfg.VAULTOPS_PROJECT_VAULT_PATH) return path.resolve(cfg.VAULTOPS_PROJECT_VAULT_PATH);
+  if (cfg.VAULTOPS_PROJECT_VAULT_ROOT) {
+    const repoId = path.basename(projectPath);
+    const vaultRoot = path.resolve(cfg.VAULTOPS_PROJECT_VAULT_ROOT);
+    // If vault root ends with repoId (doc repo), return as-is
+    if (path.basename(vaultRoot) === repoId) return vaultRoot;
+    return path.join(vaultRoot, repoId);
+  }
+  // 3. Doc repo: vault = project itself
+  if (fs.existsSync(path.join(projectPath, '08-Execution'))) return projectPath;
+  return null;
+}
+
+function readVaultSyncConfig(vaultPath) {
+  // Sync config lives in project's .vaultops/config.env
+  const projectPath = process.cwd();
+  const cfg = parseEnvFile(path.join(projectPath, '.vaultops', 'config.env'));
+  // For doc repos, config is in the vault itself
+  if (Object.keys(cfg).length === 0) {
+    const vaultCfg = parseEnvFile(path.join(vaultPath, '.vaultops', 'config.env'));
+    return vaultCfg;
+  }
+  return cfg;
+}
+
+function writeVaultSyncConfig(projectPath, vaultPath, data) {
+  // Write to project config
+  const cfgPath = path.join(projectPath, '.vaultops', 'config.env');
+  writeEnvFile(cfgPath, data);
+  // For doc repos, also write to vault
+  const docRepoCfg = parseEnvFile(path.join(vaultPath, '.vaultops', 'config.env'));
+  if (docRepoCfg.VAULTOPS_DOC_REPO === 'true' || path.resolve(projectPath) === path.resolve(vaultPath)) {
+    writeEnvFile(path.join(vaultPath, '.vaultops', 'config.env'), data);
+  }
+}
+
+async function promptLine(rl, question) {
+  return new Promise((resolve) => {
+    rl.question(`  ${question} `, (answer) => resolve(answer.trim()));
+  });
+}
+
+async function cmdSyncSetup(opts) {
+  const { createInterface } = require('readline');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+  try {
+    banner();
+    console.log(color('  vaultops sync setup — Autonomous Git Sync', 'bold'));
+    console.log('');
+
+    const projectPath = process.cwd();
+    const vaultPath = resolveVaultForSync(opts);
+
+    if (!vaultPath) {
+      fail('Could not resolve vault path. Run from a project with VaultOps configured.');
+      process.exit(1);
+    }
+
+    info(`Vault: ${vaultPath}`);
+    console.log('');
+
+    // 1. Detect or prompt for git remote
+    let remoteUrl = '';
+    const remoteCheck = spawnSync('git', ['remote', 'get-url', 'origin'], { cwd: vaultPath, stdio: 'pipe' });
+    if (remoteCheck.status === 0) {
+      remoteUrl = remoteCheck.stdout.toString().trim();
+      ok(`Git remote detected: ${color(remoteUrl, 'bold')}`);
+    } else {
+      // Check if git init needed
+      if (!fs.existsSync(path.join(vaultPath, '.git'))) {
+        info('No git repository found — initializing...');
+        const initResult = spawnSync('git', ['init'], { cwd: vaultPath, stdio: 'pipe' });
+        if (initResult.status !== 0) {
+          fail('git init failed. Please initialize git manually.');
+          process.exit(1);
+        }
+        ok('Git repository initialized');
+      }
+
+      const url = await promptLine(rl, 'Git remote URL (HTTPS or SSH, leave blank to skip):');
+      if (url) {
+        if (!SAFE_REMOTE_SYNC_RE.test(url)) {
+          fail('Invalid remote URL. Only HTTPS and SSH (git@...) are allowed.');
+          process.exit(1);
+        }
+        const addResult = spawnSync('git', ['remote', 'add', 'origin', url], { cwd: vaultPath, stdio: 'pipe' });
+        if (addResult.status !== 0) {
+          fail('Failed to add remote. Check the URL and try again.');
+          process.exit(1);
+        }
+        remoteUrl = url;
+        ok(`Remote added: ${color(url, 'bold')}`);
+      } else {
+        warn('No remote — sync will commit locally only (no push).');
+      }
+    }
+
+    console.log('');
+
+    // 2. Mode selection
+    console.log('  Usage mode:');
+    console.log('  [1] Personal — just me, single machine');
+    console.log('  [2] Team     — shared vault, multiple contributors');
+    console.log('');
+    const modeChoice = await promptLine(rl, 'Choice [1/2, default: 1]:');
+    const mode = modeChoice === '2' ? 'team' : 'personal';
+    ok(`Mode: ${color(mode, 'bold')}`);
+    console.log('');
+
+    // 3. Schedule
+    if (mode === 'personal') {
+      console.log('  Sync schedule:');
+      console.log('  [1] Session end (when Claude Code stops)');
+      console.log('  [2] Hourly');
+      console.log('  [3] Daily');
+      console.log('  [4] Manual only (vaultops sync now)');
+    } else {
+      console.log('  Sync schedule:');
+      console.log('  [1] Hourly (recommended for teams)');
+      console.log('  [2] Session end');
+      console.log('  [3] Daily');
+      console.log('  [4] Manual only (vaultops sync now)');
+    }
+    console.log('');
+    const schedChoice = await promptLine(rl, 'Choice [1-4, default: 1]:');
+    let schedule;
+    if (mode === 'personal') {
+      schedule = { '1': 'session', '2': 'hourly', '3': 'daily', '4': 'manual' }[schedChoice] || 'session';
+    } else {
+      schedule = { '1': 'hourly', '2': 'session', '3': 'daily', '4': 'manual' }[schedChoice] || 'hourly';
+    }
+    ok(`Schedule: ${color(schedule, 'bold')}`);
+    console.log('');
+
+    // 4. Branch
+    let branch = 'main';
+    const branchResult = spawnSync('git', ['branch', '--show-current'], { cwd: vaultPath, stdio: 'pipe' });
+    if (branchResult.status === 0 && branchResult.stdout.toString().trim()) {
+      branch = branchResult.stdout.toString().trim();
+    }
+    const branchInput = await promptLine(rl, `Branch [default: ${branch}]:`);
+    if (branchInput) {
+      if (!SAFE_BRANCH_SYNC_RE.test(branchInput)) {
+        fail('Invalid branch name.');
+        process.exit(1);
+      }
+      branch = branchInput;
+    }
+
+    // 5. Conflict strategy (auto for personal, notify for team)
+    const conflictStrategy = mode === 'personal' ? 'auto-ours' : 'notify';
+    info(`Conflict resolution: ${color(mode === 'personal' ? 'auto-resolve (keep local)' : 'notify (write Conflict Report.md)', 'bold')}`);
+
+    // 6. Team mode: write .gitattributes for union merge
+    if (mode === 'team') {
+      const gaPath = path.join(vaultPath, '.gitattributes');
+      const teamAttrs = '# VaultOps — append-only files always union-merge (keep both sides)\n08-Execution/Execution Journal.md  merge=union\n08-Execution/Sync Log.md           merge=union\n08-Execution/Task Board.md         merge=union\n_meetings/**                       merge=union\n';
+      let existingGa = '';
+      if (fs.existsSync(gaPath)) existingGa = fs.readFileSync(gaPath, 'utf8');
+      if (!existingGa.includes('merge=union')) {
+        fs.writeFileSync(gaPath, existingGa + (existingGa.endsWith('\n') || !existingGa ? '' : '\n') + teamAttrs, 'utf8');
+        ok('Wrote .gitattributes with union merge strategy for team mode');
+      } else {
+        info('.gitattributes already has union merge strategy');
+      }
+    }
+
+    // 7. Test connectivity (fetch)
+    if (remoteUrl) {
+      info('Testing remote connectivity...');
+      const fetchResult = spawnSync('git', ['fetch', 'origin', '--dry-run'], { cwd: vaultPath, stdio: 'pipe', timeout: 15000 });
+      if (fetchResult.status === 0) {
+        ok('Remote connection verified');
+      } else {
+        warn('Could not verify remote (may need SSH key or credentials). Continuing anyway.');
+      }
+    }
+
+    // 8. Write config
+    console.log('');
+    const syncConfigData = {
+      VAULTOPS_GIT_SYNC: 'enabled',
+      VAULTOPS_GIT_SYNC_MODE: mode,
+      VAULTOPS_GIT_SYNC_SCHEDULE: schedule,
+      VAULTOPS_GIT_CONFLICT_STRATEGY: conflictStrategy,
+      VAULTOPS_GIT_BRANCH: branch,
+      VAULTOPS_GIT_REMOTE: remoteUrl,
+    };
+    writeVaultSyncConfig(projectPath, vaultPath, syncConfigData);
+    ok('Sync configuration saved');
+
+    // 9. Install OS scheduler if needed
+    if (schedule === 'hourly' || schedule === 'daily') {
+      await installScheduler(vaultPath, schedule, opts);
+    }
+
+    console.log('');
+    const schedDisplay = schedule === 'session' ? 'at session end' : schedule === 'manual' ? 'manually only' : `every ${schedule}`;
+    const remoteDisplay = remoteUrl ? remoteUrl.replace(/^https?:\/\//, '').replace(/^git@/, '').replace(/:/, '/').replace(/\.git$/, '') : 'no remote';
+    box([
+      `Mode: ${mode}`,
+      `Schedule: ${schedDisplay}`,
+      `Remote: ${remoteDisplay}`,
+      `Branch: ${branch}`,
+      '',
+      mode === 'team' ? 'Team mode: union merge + conflict notifications' : 'Personal mode: auto-resolve conflicts',
+      '',
+      'Run now: vaultops sync now',
+      'Status:  vaultops sync status',
+    ], 'GIT SYNC CONFIGURED');
+  } finally {
+    rl.close();
+  }
+}
+
+function cmdSyncNow(opts) {
+  const vaultPath = resolveVaultForSync(opts);
+  if (!vaultPath) {
+    fail('Could not resolve vault path. Run from a VaultOps project or use --vault <path>.');
+    process.exit(1);
+  }
+
+  const projectPath = process.cwd();
+  const cfg = readVaultSyncConfig(vaultPath);
+
+  if (cfg.VAULTOPS_GIT_SYNC !== 'enabled') {
+    fail('Git sync not configured. Run: vaultops sync setup');
+    process.exit(1);
+  }
+
+  const mode = cfg.VAULTOPS_GIT_SYNC_MODE || 'personal';
+  const conflictStrategy = cfg.VAULTOPS_GIT_CONFLICT_STRATEGY || (mode === 'personal' ? 'auto-ours' : 'notify');
+  const branch = cfg.VAULTOPS_GIT_BRANCH || 'main';
+
+  info(`Syncing vault: ${vaultPath}`);
+
+  // Get user identity for team mode
+  let userIdentity = '';
+  if (mode === 'team') {
+    const nameResult = spawnSync('git', ['config', 'user.name'], { cwd: vaultPath, stdio: 'pipe' });
+    const name = nameResult.status === 0 ? nameResult.stdout.toString().trim() : '';
+    const host = require('os').hostname().split('.')[0];
+    userIdentity = name ? `${name}@${host}` : host;
+  }
+
+  // Check git exists
+  if (!fs.existsSync(path.join(vaultPath, '.git'))) {
+    fail('No git repository in vault. Run: vaultops sync setup');
+    process.exit(1);
+  }
+
+  // Run sync inline (mirrors src/sync.ts logic for CLI use)
+  const startMs = Date.now();
+  let remote = '';
+  let skipped = false;
+  let committed = false;
+  let pushed = false;
+  let conflicts = false;
+  let commitSha = '';
+  let errorMsg = '';
+
+  try {
+    // Get remote
+    const remoteOut = spawnSync('git', ['remote', 'get-url', 'origin'], { cwd: vaultPath, stdio: 'pipe' });
+    if (remoteOut.status === 0) remote = remoteOut.stdout.toString().trim();
+
+    // Check status
+    const statusOut = spawnSync('git', ['status', '--porcelain'], { cwd: vaultPath, stdio: 'pipe' });
+    const statusStr = statusOut.stdout.toString().trim();
+
+    if (!statusStr) {
+      skipped = true;
+    } else {
+      // Stage vault dirs
+      const vaultDirs = ['08-Execution', '_meetings', '_shared'];
+      // Discover NN-* dirs
+      try {
+        for (const entry of fs.readdirSync(vaultPath, { withFileTypes: true })) {
+          if (entry.isDirectory() && /^\d{2}-/.test(entry.name)) vaultDirs.push(entry.name);
+        }
+      } catch { /* ignore */ }
+
+      for (const vd of vaultDirs) {
+        if (fs.existsSync(path.join(vaultPath, vd))) {
+          spawnSync('git', ['add', vd], { cwd: vaultPath, stdio: 'pipe' });
+        }
+      }
+
+      const diff = spawnSync('git', ['diff', '--cached', '--quiet'], { cwd: vaultPath, stdio: 'pipe' });
+      if (diff.status === 0) {
+        skipped = true;
+      } else {
+        const now = new Date().toISOString().slice(0, 16).replace('T', ' ');
+        const identity = mode === 'team' && userIdentity ? ` [${userIdentity}]` : '';
+        const commitMsg = `vault: sync ${now}${identity}`;
+        const commit = spawnSync('git', ['commit', '-m', commitMsg], { cwd: vaultPath, stdio: 'pipe', timeout: 15000 });
+        if (commit.status === 0) {
+          committed = true;
+          const logOut = spawnSync('git', ['log', '--format=%H', '-1'], { cwd: vaultPath, stdio: 'pipe' });
+          if (logOut.status === 0) commitSha = logOut.stdout.toString().trim().slice(0, 7);
+        }
+      }
+    }
+
+    if (remote) {
+      info(`Pulling from ${remote}...`);
+      const pull = spawnSync('git', ['pull', '--rebase', 'origin', branch], { cwd: vaultPath, stdio: 'pipe', timeout: 30000 });
+      if (pull.status !== 0) {
+        const conflictStatus = spawnSync('git', ['status', '--porcelain'], { cwd: vaultPath, stdio: 'pipe' });
+        const conflictFiles = (conflictStatus.stdout?.toString() ?? '')
+          .split('\n')
+          .filter(l => /^(UU|AA|DD|AU|UA)/.test(l))
+          .map(l => l.slice(3).trim())
+          .filter(Boolean);
+
+        conflicts = true;
+
+        if (conflictStrategy === 'auto-ours') {
+          let resolved = conflictFiles.length > 0;
+          for (const f of conflictFiles) {
+            const co = spawnSync('git', ['checkout', '--ours', f], { cwd: vaultPath, stdio: 'pipe' });
+            if (co.status === 0) spawnSync('git', ['add', f], { cwd: vaultPath, stdio: 'pipe' });
+            else resolved = false;
+          }
+          if (resolved && conflictFiles.length > 0) {
+            const cont = spawnSync('git', ['rebase', '--continue'], {
+              cwd: vaultPath, stdio: 'pipe', timeout: 15000,
+              env: { ...process.env, GIT_EDITOR: 'true' },
+            });
+            if (cont.status === 0) {
+              conflicts = false;
+              ok('Conflicts auto-resolved (kept local changes)');
+            } else {
+              spawnSync('git', ['rebase', '--abort'], { cwd: vaultPath, stdio: 'pipe' });
+              errorMsg = 'Auto-resolve failed — resolve conflicts manually';
+            }
+          } else {
+            spawnSync('git', ['rebase', '--abort'], { cwd: vaultPath, stdio: 'pipe' });
+          }
+        } else {
+          spawnSync('git', ['rebase', '--abort'], { cwd: vaultPath, stdio: 'pipe' });
+          // Write conflict report
+          const execDirPath = path.join(vaultPath, '08-Execution');
+          if (fs.existsSync(execDirPath)) {
+            const reportPath = path.join(execDirPath, 'Conflict Report.md');
+            const fileList = conflictFiles.length ? conflictFiles.map(f => `- ${f}`).join('\n') : '- (check git status)';
+            const report = `---\nreported_at: ${new Date().toISOString()}\nstrategy: notify\n---\n\n# Conflict Report\n\nConflicts detected:\n\n${fileList}\n\n## Resolution\n\n1. Resolve <<<<<<< / >>>>>>> markers in each file\n2. Run: \`vaultops sync now\`\n`;
+            fs.writeFileSync(reportPath, report, 'utf8');
+          }
+          warn(`Conflicts in ${conflictFiles.length || 'some'} file(s) — see 08-Execution/Conflict Report.md`);
+        }
+      }
+
+      if (!conflicts && !errorMsg) {
+        info('Pushing to remote...');
+        const push = spawnSync('git', ['push', 'origin', branch], { cwd: vaultPath, stdio: 'pipe', timeout: 30000 });
+        if (push.status === 0) {
+          pushed = true;
+        } else {
+          errorMsg = `Push failed: ${push.stderr?.toString()?.slice(0, 200) ?? ''}`;
+        }
+      }
+    }
+  } catch (e) {
+    errorMsg = e.message || String(e);
+  }
+
+  const durationMs = Date.now() - startMs;
+  const durationStr = `${(durationMs / 1000).toFixed(1)}s`;
+
+  // Append to sync log
+  try {
+    const logPath = path.join(vaultPath, '08-Execution', 'Sync Log.md');
+    const now = new Date().toISOString().slice(0, 16).replace('T', ' ');
+    const remoteShort = remote ? remote.replace(/^https?:\/\//, '').replace(/^git@/, '').replace(/:/, '/').replace(/\.git$/, '') : '\u2014';
+    let statusIcon = errorMsg ? '\u2717 error' : conflicts ? '\u26a0 conflict' : skipped ? '\u2013 skipped' : pushed ? '\u2713 pushed' : '\u2713 committed';
+    const row = `| ${now} | ${statusIcon} | ${commitSha || '\u2014'} | ${remoteShort} | ${durationStr} |\n`;
+    if (!fs.existsSync(logPath)) {
+      fs.mkdirSync(path.dirname(logPath), { recursive: true });
+      fs.writeFileSync(logPath, `# Sync Log\n\n| Date | Status | Commit | Remote | Duration |\n| ---- | ------ | ------ | ------ | -------- |\n${row}`, 'utf8');
+    } else {
+      fs.appendFileSync(logPath, row, 'utf8');
+    }
+  } catch { /* ignore */ }
+
+  if (errorMsg) {
+    fail(errorMsg);
+  } else if (conflicts) {
+    warn(`Conflicts detected — see 08-Execution/Conflict Report.md (${durationStr})`);
+  } else if (skipped && !pushed) {
+    info(`Nothing to sync — vault is up to date (${durationStr})`);
+  } else {
+    const parts = [];
+    if (committed) parts.push(`committed ${commitSha}`);
+    if (pushed) parts.push(`pushed to ${remote ? remote.replace(/^https?:\/\//, '').replace(/^git@/, '').replace(/:/, '/') : 'remote'}`);
+    ok(`Sync complete: ${parts.join(', ')} (${durationStr})`);
+  }
+}
+
+function cmdSyncStatus(opts) {
+  const vaultPath = resolveVaultForSync(opts);
+  if (!vaultPath) {
+    fail('Could not resolve vault path. Run from a VaultOps project or use --vault <path>.');
+    process.exit(1);
+  }
+
+  const cfg = readVaultSyncConfig(vaultPath);
+  const syncEnabled = cfg.VAULTOPS_GIT_SYNC === 'enabled';
+  const mode = cfg.VAULTOPS_GIT_SYNC_MODE || 'personal';
+  const schedule = cfg.VAULTOPS_GIT_SYNC_SCHEDULE || 'manual';
+  const branch = cfg.VAULTOPS_GIT_BRANCH || 'main';
+  const remote = cfg.VAULTOPS_GIT_REMOTE || '';
+
+  printBanner();
+  console.log(color('  Git Sync Status', 'bold'));
+  console.log('');
+  console.log(`  Enabled:  ${syncEnabled ? color('yes', 'green') : color('no (run: vaultops sync setup)', 'yellow')}`);
+  if (syncEnabled) {
+    console.log(`  Mode:     ${color(mode, 'bold')}`);
+    console.log(`  Schedule: ${color(schedule, 'bold')}`);
+    console.log(`  Branch:   ${branch}`);
+    if (remote) console.log(`  Remote:   ${remote.replace(/^https?:\/\//, '').replace(/^git@/, '').replace(/:/, '/')}`);
+  }
+  console.log('');
+
+  if (!fs.existsSync(path.join(vaultPath, '.git'))) {
+    warn('No git repository in vault');
+    return;
+  }
+
+  // Pending changes count
+  const statusOut = spawnSync('git', ['status', '--porcelain'], { cwd: vaultPath, stdio: 'pipe' });
+  const pendingLines = (statusOut.stdout?.toString() ?? '').split('\n').filter(l => l.trim());
+  if (pendingLines.length > 0) {
+    console.log(`  Pending:  ${color(`${pendingLines.length} file(s) uncommitted`, 'yellow')}`);
+  } else {
+    console.log(`  Pending:  ${color('clean', 'green')}`);
+  }
+
+  // Conflict report
+  const conflictReport = path.join(vaultPath, '08-Execution', 'Conflict Report.md');
+  if (fs.existsSync(conflictReport)) {
+    console.log(`  Conflicts: ${color('yes — see 08-Execution/Conflict Report.md', 'red')}`);
+  }
+
+  // Last sync from log
+  const logPath = path.join(vaultPath, '08-Execution', 'Sync Log.md');
+  if (fs.existsSync(logPath)) {
+    const logContent = fs.readFileSync(logPath, 'utf8');
+    const dataLines = logContent.split('\n').filter(l => l.startsWith('|') && !l.includes('Date') && !l.includes('----'));
+    if (dataLines.length > 0) {
+      const last = dataLines[dataLines.length - 1];
+      const cols = last.split('|').map(c => c.trim()).filter(Boolean);
+      if (cols.length >= 2) {
+        console.log(`  Last sync: ${cols[0]} — ${cols[1]}`);
+      }
+    }
+  }
+
+  console.log('');
+  if (syncEnabled) {
+    console.log(`  Run now:   ${color('vaultops sync now', 'bold')}`);
+    if (schedule === 'hourly' || schedule === 'daily') {
+      // Check if launchd plist is installed (macOS)
+      const plistPath = path.join(os.homedir(), 'Library', 'LaunchAgents', 'org.vaultops.sync.plist');
+      const cronMarker = path.join(installDir, 'state', 'sync-cron-installed');
+      const schedulerInstalled = fs.existsSync(plistPath) || fs.existsSync(cronMarker);
+      console.log(`  Scheduler: ${schedulerInstalled ? color('installed', 'green') : color('not installed — run: vaultops sync schedule install', 'yellow')}`);
+    }
+  }
+}
+
+async function installScheduler(vaultPath, schedule, opts) {
+  const platform = process.platform;
+  const vaultopsCmd = process.argv[1]; // path to vault_cli.js
+  const intervalSeconds = schedule === 'hourly' ? 3600 : 86400;
+
+  if (platform === 'darwin') {
+    // macOS: launchd plist
+    const plistDir = path.join(os.homedir(), 'Library', 'LaunchAgents');
+    const plistPath = path.join(plistDir, 'org.vaultops.sync.plist');
+    const logDir = path.join(installDir, 'logs');
+    ensureDir(logDir);
+    ensureDir(plistDir);
+
+    const plistContent = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>org.vaultops.sync</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${process.execPath}</string>
+    <string>${vaultopsCmd}</string>
+    <string>sync</string>
+    <string>now</string>
+    <string>--vault</string>
+    <string>${vaultPath}</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>${intervalSeconds}</integer>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>${path.join(logDir, 'sync.log')}</string>
+  <key>StandardErrorPath</key>
+  <string>${path.join(logDir, 'sync-error.log')}</string>
+</dict>
+</plist>
+`;
+    fs.writeFileSync(plistPath, plistContent, 'utf8');
+
+    // Unload existing (ignore errors), then load
+    spawnSync('launchctl', ['unload', plistPath], { stdio: 'ignore' });
+    const load = spawnSync('launchctl', ['load', plistPath], { stdio: 'pipe' });
+    if (load.status === 0) {
+      ok(`Scheduler installed: ${schedule} sync via launchd`);
+      info(`Logs: ${logDir}/sync.log`);
+    } else {
+      warn('launchctl load failed — scheduler may need manual activation');
+      info(`Plist written to: ${plistPath}`);
+    }
+  } else if (platform === 'linux') {
+    // Linux: cron
+    const cronLine = `${schedule === 'hourly' ? '0 * * * *' : '0 0 * * *'} ${process.execPath} ${vaultopsCmd} sync now --vault ${vaultPath} >> ${path.join(installDir, 'logs', 'sync.log')} 2>&1`;
+    const { createInterface } = require('readline');
+    const rl2 = createInterface({ input: process.stdin, output: process.stdout });
+    info('To install cron job, add this line to your crontab (crontab -e):');
+    console.log('');
+    cmdBox(cronLine, 'cron entry');
+    console.log('');
+    // Save cron marker
+    ensureDir(path.join(installDir, 'state'));
+    fs.writeFileSync(path.join(installDir, 'state', 'sync-cron-installed'), cronLine, 'utf8');
+    rl2.close();
+  } else {
+    warn('Automatic scheduler not supported on this platform. Run manually: vaultops sync now');
+  }
+}
+
+function cmdSyncScheduleUninstall() {
+  const platform = process.platform;
+  if (platform === 'darwin') {
+    const plistPath = path.join(os.homedir(), 'Library', 'LaunchAgents', 'org.vaultops.sync.plist');
+    if (fs.existsSync(plistPath)) {
+      spawnSync('launchctl', ['unload', plistPath], { stdio: 'ignore' });
+      fs.unlinkSync(plistPath);
+      ok('Scheduler uninstalled (launchd plist removed)');
+    } else {
+      info('No scheduler installed');
+    }
+  } else {
+    const cronMarker = path.join(installDir, 'state', 'sync-cron-installed');
+    if (fs.existsSync(cronMarker)) {
+      const cronLine = fs.readFileSync(cronMarker, 'utf8');
+      fs.unlinkSync(cronMarker);
+      info('Remove this line from your crontab (crontab -e):');
+      console.log(`  ${cronLine}`);
+    } else {
+      info('No scheduler marker found');
+    }
+  }
+}
+
+function printBanner() {
+  if (!process.stdout.isTTY) return;
+  console.log('');
+  console.log(`  ${color('\u25c6', 'boldBlue')}  ${color('VAULTOPS', 'bold')}  ${color('\u2500'.repeat(34), 'dim')}`);
+  console.log('');
+}
+
+async function cmdSync(opts) {
+  const subCmd = opts._?.[0] || 'status';
+
+  switch (subCmd) {
+    case 'setup':  await cmdSyncSetup(opts); return;
+    case 'now':    cmdSyncNow(opts); return;
+    case 'status': cmdSyncStatus(opts); return;
+    case 'schedule': {
+      const schedSub = opts._?.[1] || 'install';
+      if (schedSub === 'uninstall') {
+        cmdSyncScheduleUninstall();
+      } else {
+        const vaultPath = resolveVaultForSync(opts);
+        if (!vaultPath) { fail('Could not resolve vault path.'); process.exit(1); }
+        const cfg = readVaultSyncConfig(vaultPath);
+        const schedule = cfg.VAULTOPS_GIT_SYNC_SCHEDULE || 'hourly';
+        await installScheduler(vaultPath, schedule, opts);
+      }
+      return;
+    }
+    default:
+      throw new Error(`Unknown sync command: ${subCmd}. Use: setup|now|status|schedule`);
+  }
+}
+
 // ── Help & main ──────────────────────────────────────────────────────────
 
 function printHelp() {
@@ -1443,6 +2084,7 @@ function printHelp() {
   console.log('  vaultops init [path]        Set up vault structure, MCP, and skills from scratch');
   console.log('  vaultops status [path]      Tell me about registered projects or a specific one');
   console.log('  vaultops open [path]        Explore Obsidian vault for this project');
+  console.log('  vaultops sync               Autonomous git sync — setup, now, status, schedule');
   console.log('  vaultops config             Manage per-project config (e.g. enrich role models)');
   console.log('  vaultops dashboard          Aggregate view — interactive multi-project dashboard');
   console.log('  vaultops uninstall [path]   Leave cleanly — remove VaultOps (CLI + artifacts)');
@@ -1488,6 +2130,7 @@ async function main() {
     case 'init': cmdInit(opts); return;
     case 'update': cmdUpdate(opts); return;
     case 'repo': cmdRepo(opts); return;
+    case 'sync': await cmdSync(opts); return;
     case 'status': case 'list': cmdStatus(opts); return;
     case 'open': cmdOpen(opts); return;
     case 'dashboard': await cmdDashboard(opts); return;

@@ -77,6 +77,21 @@ export const SECTION_RENAMES: Record<string, string> = {
   "02-Research": "02-Architecture",
 };
 
+// ── Git sync ───────────────────────────────────────────────────────────
+
+/** Config key: sync enabled/disabled */
+export const CFG_GIT_SYNC = "VAULTOPS_GIT_SYNC";
+/** Config key: personal | team */
+export const CFG_GIT_SYNC_MODE = "VAULTOPS_GIT_SYNC_MODE";
+/** Config key: session | hourly | daily | manual */
+export const CFG_GIT_SYNC_SCHEDULE = "VAULTOPS_GIT_SYNC_SCHEDULE";
+/** Config key: auto-ours | notify */
+export const CFG_GIT_CONFLICT_STRATEGY = "VAULTOPS_GIT_CONFLICT_STRATEGY";
+/** Config key: git branch (default: main) */
+export const CFG_GIT_BRANCH = "VAULTOPS_GIT_BRANCH";
+/** Config key: git remote URL (stored for reference only, no credentials) */
+export const CFG_GIT_REMOTE = "VAULTOPS_GIT_REMOTE";
+
 // ── Impact receipts ────────────────────────────────────────────────────
 
 export const RECEIPT_WIDTH = 43;

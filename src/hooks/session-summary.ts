@@ -22,6 +22,7 @@ import { vaultStats, progressBar } from "../tools/helpers.js";
 import { updateTask, logStep } from "../tools/core.js";
 import { getStaleDocs } from "../tools/ecosystem.js";
 import { EXEC_JOURNAL, TASKS_DIR, SPRINTS_DIR } from "../constants.js";
+import { getSyncConfig, syncVault, getGitUserIdentity, hasGitRepo } from "../sync.js";
 
 const BRAIN_SEP = "\u2501".repeat(43);
 
@@ -362,6 +363,35 @@ function main(): void {
       }
     }
   } catch { /* ignore */ }
+
+  // Auto-sync: run if schedule=session
+  let syncLine = "";
+  try {
+    const syncCfg = getSyncConfig(projectPath);
+    const vaultProject = resolveVaultProject(projectPath);
+    if (syncCfg.enabled && syncCfg.schedule === "session" && vaultProject && hasGitRepo(vaultProject)) {
+      const userIdentity = syncCfg.mode === "team" ? getGitUserIdentity(vaultProject) : undefined;
+      const syncResult = syncVault({
+        vaultPath: vaultProject,
+        conflictStrategy: syncCfg.conflictStrategy,
+        branch: syncCfg.branch,
+        mode: syncCfg.mode,
+        userIdentity,
+      });
+      const remoteShort = syncResult.remote
+        ? syncResult.remote.replace(/^https?:\/\//, "").replace(/^git@/, "").replace(/:/, "/").replace(/\.git$/, "")
+        : "remote";
+      if (syncResult.error) {
+        syncLine = `  \u26a0  SYNC: ${syncResult.error.slice(0, 60)}`;
+      } else if (syncResult.conflicts) {
+        syncLine = `  \u26a0  SYNC: conflicts \u2014 see 08-Execution/Conflict Report.md`;
+      } else if (!syncResult.skipped) {
+        syncLine = `  \ud83d\udce1  SYNC: pushed to ${remoteShort} (${(syncResult.durationMs / 1000).toFixed(1)}s)`;
+      }
+    }
+  } catch { /* never let sync failure break session end */ }
+
+  if (syncLine) lines.push(syncLine);
 
   lines.push(BRAIN_SEP);
 
