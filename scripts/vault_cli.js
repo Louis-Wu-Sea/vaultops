@@ -460,14 +460,14 @@ function cmdRepoInit(opts) {
   });
   ok(`Registered doc repo: ${entry.key}`);
 
-  printBox([
+  box([
     `Doc repo ready: ${repoPath}`,
     `Repo ID: ${repoId}`,
     remote ? `Remote: ${remote}` : 'No remote (add with: git remote add origin <url>)',
     `Auto-commit: ${autoCommit}`,
     '',
     'Use all VaultOps tools — /task, /plan, /kanban, /docs, etc.',
-    'Sync to remote: vaultops repo sync',
+    'Sync to remote: vaultops sync now',
   ], 'DOC REPO INITIALIZED');
 }
 
@@ -833,28 +833,17 @@ Use mcp__vaultops__* tools (NOT mcp__obsidian__* — different vault, no access)
   console.log('');
 
   // — In Claude Code —
-  console.log(`  ${color('─── Open Claude Code and type these in the chat ──', 'dim')}`);
+  console.log(`  ${color('─── Open Claude Code and type this in the chat ───', 'dim')}`);
   console.log('');
-  console.log(`  ${color('First time?', 'bold')} Let Claude read your whole codebase:`);
-  cmdBox('/vault:docs');
-  console.log(`  It writes architecture docs, API reference, and a`);
-  console.log(`  runbook straight into your notebook.`);
-  console.log('');
-  console.log(`  ${color('Any time:', 'bold')} see what you\'re working on:`);
   cmdBox('/vault:today');
+  console.log(`  Shows your tasks and what to work on.`);
   console.log('');
-  console.log(`  ${color('Or just talk to Claude.', 'bold')} Describe what you\'re building`);
-  console.log(`  and it creates ${color('EXE-### tasks', 'bold')} and tracks them automatically.`);
+  console.log(`  ${color('Or just describe work to Claude —', 'dim')} it creates EXE-### tasks automatically.`);
   console.log('');
-
-  // — In terminal —
-  console.log(`  ${color('─── These go in your terminal, not in Claude ──────', 'dim')}`);
+  console.log(`  ${color('─── Optional ─────────────────────────────────────', 'dim')}`);
   console.log('');
-  console.log(`   ${color('vaultops open', 'bold')}     Open your notebook in Obsidian`);
-  console.log(`   ${color('vaultops status', 'bold')}   See all your projects`);
-  console.log(`   ${color('vaultops update', 'bold')}   Get the latest version`);
-  console.log('');
-  console.log(`  ${color('See all 28 Claude Code commands:', 'dim')} /vault:context`);
+  console.log(`   ${color('/vault:docs', 'bold')}    Let Claude scan your codebase and write docs`);
+  console.log(`   ${color('vaultops open', 'bold')}  Open your notebook in Obsidian`);
   console.log('');
 }
 
@@ -1526,15 +1515,20 @@ function writeVaultSyncConfig(projectPath, vaultPath, data) {
   }
 }
 
-async function promptLine(rl, question) {
-  return new Promise((resolve) => {
-    rl.question(`  ${question} `, (answer) => resolve(answer.trim()));
-  });
-}
 
 async function cmdSyncSetup(opts) {
   const { createInterface } = require('readline');
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+  // Non-interactive mode: all required flags provided
+  const nonInteractive = opts.mode || opts.schedule;
+
+  const rl = nonInteractive
+    ? null
+    : createInterface({ input: process.stdin, output: process.stdout });
+
+  const prompt = nonInteractive
+    ? (_q) => Promise.resolve('')
+    : (q) => new Promise((res) => rl.question(`  ${q} `, (a) => res(a.trim())));
 
   try {
     banner();
@@ -1570,7 +1564,8 @@ async function cmdSyncSetup(opts) {
         ok('Git repository initialized');
       }
 
-      const url = await promptLine(rl, 'Git remote URL (HTTPS or SSH, leave blank to skip):');
+      const urlFlag = opts.remote || '';
+      const url = urlFlag || await prompt('Git remote URL (HTTPS or SSH, leave blank to skip):');
       if (url) {
         if (!SAFE_REMOTE_SYNC_RE.test(url)) {
           fail('Invalid remote URL. Only HTTPS and SSH (git@...) are allowed.');
@@ -1591,38 +1586,49 @@ async function cmdSyncSetup(opts) {
     console.log('');
 
     // 2. Mode selection
-    console.log('  Usage mode:');
-    console.log('  [1] Personal — just me, single machine');
-    console.log('  [2] Team     — shared vault, multiple contributors');
-    console.log('');
-    const modeChoice = await promptLine(rl, 'Choice [1/2, default: 1]:');
-    const mode = modeChoice === '2' ? 'team' : 'personal';
-    ok(`Mode: ${color(mode, 'bold')}`);
+    let mode;
+    if (opts.mode && (opts.mode === 'personal' || opts.mode === 'team')) {
+      mode = opts.mode;
+      ok(`Mode: ${color(mode, 'bold')} (from --mode flag)`);
+    } else {
+      console.log('  Usage mode:');
+      console.log('  [1] Personal — just me, single machine');
+      console.log('  [2] Team     — shared vault, multiple contributors');
+      console.log('');
+      const modeChoice = await prompt('Choice [1/2, default: 1]:');
+      mode = modeChoice === '2' ? 'team' : 'personal';
+      ok(`Mode: ${color(mode, 'bold')}`);
+    }
     console.log('');
 
     // 3. Schedule
-    if (mode === 'personal') {
-      console.log('  Sync schedule:');
-      console.log('  [1] Session end (when Claude Code stops)');
-      console.log('  [2] Hourly');
-      console.log('  [3] Daily');
-      console.log('  [4] Manual only (vaultops sync now)');
-    } else {
-      console.log('  Sync schedule:');
-      console.log('  [1] Hourly (recommended for teams)');
-      console.log('  [2] Session end');
-      console.log('  [3] Daily');
-      console.log('  [4] Manual only (vaultops sync now)');
-    }
-    console.log('');
-    const schedChoice = await promptLine(rl, 'Choice [1-4, default: 1]:');
     let schedule;
-    if (mode === 'personal') {
-      schedule = { '1': 'session', '2': 'hourly', '3': 'daily', '4': 'manual' }[schedChoice] || 'session';
+    if (opts.schedule && ['session', 'hourly', 'daily', 'manual'].includes(opts.schedule)) {
+      schedule = opts.schedule;
+      ok(`Schedule: ${color(schedule, 'bold')} (from --schedule flag)`);
     } else {
-      schedule = { '1': 'hourly', '2': 'session', '3': 'daily', '4': 'manual' }[schedChoice] || 'hourly';
+      if (mode === 'personal') {
+        console.log('  Sync schedule:');
+        console.log('  [1] Session end (when Claude Code stops)');
+        console.log('  [2] Hourly');
+        console.log('  [3] Daily');
+        console.log('  [4] Manual only (vaultops sync now)');
+      } else {
+        console.log('  Sync schedule:');
+        console.log('  [1] Hourly (recommended for teams)');
+        console.log('  [2] Session end');
+        console.log('  [3] Daily');
+        console.log('  [4] Manual only (vaultops sync now)');
+      }
+      console.log('');
+      const schedChoice = await prompt('Choice [1-4, default: 1]:');
+      if (mode === 'personal') {
+        schedule = { '1': 'session', '2': 'hourly', '3': 'daily', '4': 'manual' }[schedChoice] || 'session';
+      } else {
+        schedule = { '1': 'hourly', '2': 'session', '3': 'daily', '4': 'manual' }[schedChoice] || 'hourly';
+      }
+      ok(`Schedule: ${color(schedule, 'bold')}`);
     }
-    ok(`Schedule: ${color(schedule, 'bold')}`);
     console.log('');
 
     // 4. Branch
@@ -1631,13 +1637,22 @@ async function cmdSyncSetup(opts) {
     if (branchResult.status === 0 && branchResult.stdout.toString().trim()) {
       branch = branchResult.stdout.toString().trim();
     }
-    const branchInput = await promptLine(rl, `Branch [default: ${branch}]:`);
-    if (branchInput) {
-      if (!SAFE_BRANCH_SYNC_RE.test(branchInput)) {
+    if (opts.branch) {
+      if (!SAFE_BRANCH_SYNC_RE.test(opts.branch)) {
         fail('Invalid branch name.');
         process.exit(1);
       }
-      branch = branchInput;
+      branch = opts.branch;
+      info(`Branch: ${color(branch, 'bold')} (from --branch flag)`);
+    } else {
+      const branchInput = await prompt(`Branch [default: ${branch}]:`);
+      if (branchInput) {
+        if (!SAFE_BRANCH_SYNC_RE.test(branchInput)) {
+          fail('Invalid branch name.');
+          process.exit(1);
+        }
+        branch = branchInput;
+      }
     }
 
     // 5. Conflict strategy (auto for personal, notify for team)
@@ -1702,7 +1717,7 @@ async function cmdSyncSetup(opts) {
       'Status:  vaultops sync status',
     ], 'GIT SYNC CONFIGURED');
   } finally {
-    rl.close();
+    if (rl) rl.close();
   }
 }
 
