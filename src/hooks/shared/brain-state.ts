@@ -158,6 +158,85 @@ const HYBRID_STEMS = new Set([
 
 const ALL_WORK_STEMS = new Set([...EN_WORK_STEMS, ...RU_WORK_STEMS, ...UK_WORK_STEMS, ...HYBRID_STEMS]);
 
+// ── Agent command detection constants ────────────────────────────────────
+// These are operations the user asks the AGENT to perform, not work items to track.
+
+const GIT_NOUNS = new Set([
+  "коммит", "commit", "пуш", "push", "пул", "pull", "мёрж", "мерж", "merge",
+  "ребейз", "rebase", "чекаут", "checkout", "бранч", "branch", "стеш", "stash",
+  "черри", "cherry", "тег", "tag", "фетч", "fetch", "клон", "clone",
+]);
+
+const TEST_NOUNS = new Set([
+  "тест", "test", "линт", "lint", "чек", "check", "билд", "build",
+  "компил", "compile", "формат", "format",
+]);
+
+const SESSION_PHRASES = new Set([
+  "ты закончил", "ты готов", "ты сделал", "ты всё", "ты все",
+  "are you done", "are you finished", "you done", "you finished",
+  "готово", "всё готово", "все готово",
+  "давай дальше", "go ahead", "поехали", "начинай",
+]);
+
+const AGENT_ACTION_STEMS = new Set([
+  "сделай", "делай", "давай", "запусти", "покажи", "открой", "закрой",
+  "выполни", "глянь", "посмотри", "скажи",
+  "run", "execute", "do", "show", "open", "close", "look",
+  "start", "stop", "print", "display",
+]);
+
+const FUNCTION_WORDS = new Set([
+  "и", "в", "на", "с", "по", "к", "у", "за", "из", "от", "до", "о", "об",
+  "the", "a", "an", "it", "to", "for", "of", "in", "on", "at", "is", "are",
+  "this", "that", "его", "её", "их", "мне", "мой", "эту", "это", "этот",
+  "ещё", "еще", "уже", "тут", "там", "все", "всё", "ок", "ok", "да", "нет",
+]);
+
+function isGitNoun(words: Set<string>): boolean {
+  for (const word of words) {
+    for (const noun of [...GIT_NOUNS, ...TEST_NOUNS]) {
+      if (word === noun || word.startsWith(noun)) return true;
+    }
+  }
+  return false;
+}
+
+function extractDomainNouns(words: Set<string>): Set<string> {
+  const result = new Set<string>();
+  for (const w of words) {
+    if (w.length < 2) continue;
+    if (FUNCTION_WORDS.has(w)) continue;
+    if ([...AGENT_ACTION_STEMS].some(s => w.startsWith(s))) continue;
+    if ([...GIT_NOUNS, ...TEST_NOUNS].some(n => w === n || w.startsWith(n))) continue;
+    result.add(w);
+  }
+  return result;
+}
+
+function isAgentCommand(promptLower: string, words: Set<string>): string | null {
+  for (const phrase of SESSION_PHRASES) {
+    if (promptLower.includes(phrase)) return "session";
+  }
+
+  const domainNouns = extractDomainNouns(words);
+  const hasGit = [...words].some(w => [...GIT_NOUNS].some(n => w === n || w.startsWith(n)));
+  const hasTest = [...words].some(w => [...TEST_NOUNS].some(n => w === n || w.startsWith(n)));
+
+  const firstWord = promptLower.split(/\s+/)[0] ?? "";
+  const isAgentVerb = [...AGENT_ACTION_STEMS].some(s => firstWord.startsWith(s));
+
+  if (isAgentVerb && hasGit) return "git";
+  if (isAgentVerb && hasTest) return "test";
+  if (isAgentVerb && domainNouns.size === 0 && words.size <= 3) return "generic";
+
+  if (promptLower.length < 40 && domainNouns.size === 0 && (hasGit || hasTest)) {
+    return hasGit ? "git" : "test";
+  }
+
+  return null;
+}
+
 // Transliteration map
 const TRANSLIT: Record<string, string> = {
   'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'yo',
@@ -229,11 +308,14 @@ function hasWorkStem(words: Set<string>): [boolean, string | null] {
     }
   }
   // Layer 3: fuzzy
-  const FUZZY_SKIP = new Set(["делает", "делать", "делал", "делаю", "робить", "робит",
-    "модуль", "работа", "работает", "файл", "файлы", "проект"]);
+  const FUZZY_SKIP = new Set([
+    "делает", "делать", "делал", "делаю", "робить", "робит",
+    "модуль", "работа", "работает", "файл", "файлы", "проект",
+    ...GIT_NOUNS, ...TEST_NOUNS, // never fuzzy-match agent command nouns
+  ]);
   for (const word of words) {
     if (word.length >= 3 && word.length <= 14 && !FUZZY_SKIP.has(word)) {
-      if (fuzzyStemMatch(word, ALL_WORK_STEMS, 0.75)) return [true, "fuzzy"];
+      if (fuzzyStemMatch(word, ALL_WORK_STEMS, 0.82)) return [true, "fuzzy"];
     }
   }
   return [false, null];
@@ -388,6 +470,11 @@ export function classifyIntent(
   if (isQuestionWord(firstWord) && isShort && !hasWork) return { action: "question", intent: "question" };
   if (endsQuestion && isShort && !hasWork) return { action: "question", intent: "question" };
 
+  // Layer 2.5: Agent command detection — git ops, test runs, session phrases
+  // These pass through silently without creating tasks
+  const commandType = isAgentCommand(promptLower, promptWords);
+  if (commandType) return { action: "none", intent: "command", match_layer: commandType };
+
   // Layer 3: Explicit EXE-### reference
   const exeMatch = EXE_PATTERN.exec(prompt);
   if (exeMatch) {
@@ -420,6 +507,10 @@ export function classifyIntent(
 
   // Layer 6: Work intent
   if (hasWork) {
+    // Short-prompt guard: very short prompts with no domain nouns are agent commands
+    if (prompt.length < 30 && extractDomainNouns(promptWords).size === 0) {
+      return { action: "none", intent: "command", match_layer: "generic" };
+    }
     return {
       action: "create",
       title: extractTaskTitle(prompt),

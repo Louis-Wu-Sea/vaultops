@@ -163,57 +163,23 @@ function main(): void {
       }
     } catch { /* ignore */ }
 
-    // Auto-complete previous task if we're pivoting
-    if (state.active_task_id && state.task_auto_created) {
-      logStep({
-        project_path: projectPath,
-        message: `Pivoting from ${state.active_task_id} to new work`,
-      });
-    }
-
-    // Create new task
-    try {
-      const createResult = createTask({
-        project_path: projectPath,
-        title,
-        priority,
-        owner: "Agent",
-        tags: ["auto-created"],
-      });
-
-      // Extract task ID from result
-      const content = createResult.content as Array<{ text?: string }>;
-      let newId = "";
-      if (content?.[0]?.text) {
-        const text = content[0].text;
-        for (const segment of [text, text.includes("\n\n") ? text.split("\n\n").pop()! : ""]) {
-          const s = segment.trim();
-          if (s.startsWith("{")) {
-            try {
-              const parsed = JSON.parse(s) as Record<string, string>;
-              newId = parsed.created ?? "";
-              if (newId) break;
-            } catch { continue; }
-          }
-        }
-      }
-
-      if (newId) {
-        // Set to IN_PROGRESS immediately
-        updateTask({ project_path: projectPath, task_id: newId, status: "IN_PROGRESS" });
-        logStep({ project_path: projectPath, message: `Auto-created ${newId}: ${title}` });
-
-        state.active_task_id = newId;
-        state.task_auto_created = true;
-        state.phase = "working";
-        state.intent = intent;
-        state.user_prompt_summary = prompt.slice(0, 200);
-        state.original_priority = priority;
-        state.intent_match_layer = result.match_layer ?? null;
-
-        outputLines.push(`[VaultOps] ${newId} created. Run /vault:enrich when ready.`);
-      }
-    } catch { /* Silently fail — don't break user flow */ }
+    // ── Suggest task to Claude — do NOT auto-create ──────────────────
+    // Claude will propose the task to the user and create it only on confirmation.
+    outputLines.push("VAULTOPS_TASK_SUGGESTION detected.");
+    outputLines.push(`  Proposed title: "${title}"`);
+    outputLines.push(`  Priority: ${priority}  Intent: ${intent}`);
+    if (predictionHint) outputLines.push(`  ${predictionHint}`);
+    outputLines.push(`  Project: ${projectPath}`);
+    outputLines.push("");
+    outputLines.push("INSTRUCTION: Before answering the user's request, ask them:");
+    outputLines.push(`  "Создать задачу: '${title}'? [${priority}]"`);
+    outputLines.push("If the user confirms (yes/да/создай/ок):");
+    outputLines.push(`  Call create_task MCP tool with project_path='${projectPath}',`);
+    outputLines.push(`  title='${title}', priority='${priority}'`);
+    outputLines.push("  Then set it IN_PROGRESS via update_task.");
+    outputLines.push("If the user declines (no/нет/не надо/пропусти):");
+    outputLines.push("  Continue normally without creating any task.");
+    outputLines.push("Do NOT create the task without explicit confirmation.");
   }
 
   saveState(projectPath, state);
